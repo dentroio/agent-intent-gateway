@@ -1,0 +1,45 @@
+# Example intent policy for a small simulated enterprise.
+version: 1
+default: deny
+
+tools:
+  finance.query_ledger:  { reads: [finance] }
+  finance.approve_payment: { writes: [finance], risk: high }
+  hr.lookup_employee:    { reads: [pii] }
+  docs.search:           { reads: [internal] }
+  web.fetch:             { reads: [untrusted], sink: external }   # query string leaves the building
+  email.read_inbox:      { reads: [untrusted] }                   # inbound mail is attacker-controllable
+  email.send:
+    sink: external
+    egress_rules:
+      - { arg: to, pattern: "*@corp.example", sink: internal }
+  ot.read_sensor:        { reads: [ot] }
+  ot.set_point:          { writes: [ot], risk: high }
+
+agents:
+  - id: expense-bot
+    purpose: Reconcile employee expense reports against the ledger
+    on_behalf_of: ["group:finance", "user:*@corp.example"]
+    allow: [finance.query_ledger, docs.search, email.send, email.read_inbox]
+    require_approval: [finance.approve_payment]
+
+  - id: research-assistant
+    purpose: Answer questions using internal docs and the public web
+    on_behalf_of: ["user:*@corp.example"]
+    allow: [docs.search, web.fetch, email.send]
+    deny: [finance.*, hr.*, ot.*]
+
+  - id: plant-monitor
+    purpose: Watch OT sensors and report anomalies to operators
+    on_behalf_of: ["group:ot-operators"]
+    allow: [ot.read_sensor, email.send]
+    require_approval: [ot.set_point]
+
+flows:
+  - { id: no-finance-egress,  from: finance,   to: external,  action: deny }
+  - { id: no-pii-egress,      from: pii,       to: external,  action: deny }
+  - { id: no-ot-egress,       from: ot,        to: external,  action: deny }
+  - { id: internal-stays-in,  from: internal,  to: external,  action: require_approval }
+  # Anything the agent read from an attacker-controllable source may not
+  # silently drive a high-risk action (indirect prompt injection).
+  - { id: untrusted-no-high-risk, from: untrusted, to: "risk:high", action: deny }
