@@ -69,7 +69,7 @@ class Gateway:
             if final == "allow":
                 # Conservative: label the session at decision time, before the
                 # result exists, so a racing second call can't slip past.
-                self.engine.record(self.session, tool)
+                self.engine.record(self.session, tool, args)
             self._log(tool, args, decision, final)
 
         if final == "allow":

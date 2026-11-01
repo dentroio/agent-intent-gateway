@@ -12,6 +12,7 @@ import sys
 
 from .engine import Engine, Session
 from .gateway import Gateway, run_stdio
+from .labels import LabelStore
 from .ledger import Ledger, verify
 from .policy import PolicyError, load_policy
 
@@ -29,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     ident(px)
     px.add_argument("--log", default="aig-decisions.jsonl")
     px.add_argument("--show-all-tools", action="store_true", help="don't hide out-of-scope tools from tools/list")
+    px.add_argument("--label-store", default="aig-labels.json",
+                    help="file shared by all gateway processes so labels follow data across agents")
     px.add_argument("upstream", nargs=argparse.REMAINDER)
 
     ck = sub.add_parser("check", help="evaluate a single call (dry run)")
@@ -72,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         print(md)
         return 1 if scoreboard(results)["unexpected"] else 0
 
-    engine = Engine(policy)
+    engine = Engine(policy, LabelStore(a.label_store) if a.cmd == "proxy" else None)
     session = Session(agent_id=a.agent, principal=a.principal)
 
     if a.cmd == "check":

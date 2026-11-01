@@ -91,7 +91,7 @@ def test_external_email_fine_before_sensitive_read():
 def test_prompt_injection_cannot_drive_high_risk_action():
     _, d = run("expense-bot", "group:finance", [
         ("email.read_inbox", {}),
-        ("finance.approve_payment", {"amount": 50000}),
+        ("finance.approve_payment", {"id": "TX-1042"}),
     ])
     assert d.action == "deny" and "flow:untrusted-no-high-risk" in d.rules
 

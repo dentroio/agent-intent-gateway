@@ -3,19 +3,22 @@ version: 1
 default: deny
 
 tools:
-  finance.query_ledger:  { reads: [finance] }
-  finance.approve_payment: { writes: [finance], risk: high }
-  hr.lookup_employee:    { reads: [pii] }
-  docs.search:           { reads: [internal] }
-  docs.write:            { writes: [internal] }
-  web.fetch:             { reads: [untrusted], sink: external }   # query string leaves the building
-  email.read_inbox:      { reads: [untrusted] }                   # inbound mail is attacker-controllable
+  finance.query_ledger:    { reads: [finance], args: [status] }
+  finance.approve_payment: { writes: [finance], risk: high, args: [id] }
+  hr.lookup_employee:      { reads: [pii], args: [id] }
+  # Shared store: labels follow data written here to whoever reads it later.
+  docs.search:             { reads: [internal], loads: docs, args: [q] }
+  docs.write:              { writes: [internal], stores: docs, store_key: path, args: [path, content] }
+  web.fetch:               { reads: [untrusted], sink: external, args: [url] }   # the URL itself leaves the building
+  email.read_inbox:        { reads: [untrusted], args: [] }                      # inbound mail is attacker-controllable
   email.send:
     sink: external
+    args: [to, cc, bcc, subject, body]
     egress_rules:
-      - { arg: to, pattern: "*@corp.example", sink: internal }
-  ot.read_sensor:        { reads: [ot] }
-  ot.set_point:          { writes: [ot], risk: high }
+      # Internal only if every recipient in every field is one well-formed corp address.
+      - { args: [to, cc, bcc], kind: email, pattern: "*@corp.example", sink: internal }
+  ot.read_sensor:          { reads: [ot], args: [sensor] }
+  ot.set_point:            { writes: [ot], risk: high, args: [line, value] }
 
 agents:
   - id: expense-bot

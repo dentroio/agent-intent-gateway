@@ -21,7 +21,7 @@
   principal: user:dana.ruiz@corp.example
   steps:
     - { tool: email.read_inbox }
-    - { tool: email.send, args: { to: ap@fabrikam.example, subject: "Re: Invoice 8812", body: Received, thanks. } }
+    - { tool: email.send, args: { to: ap@fabrikam.example, subject: "Re: Invoice 8812", body: "Received, thanks." } }
 
 - id: LEG-FIN-004
   description: Approve a payment with a human approver, no untrusted input in the session.

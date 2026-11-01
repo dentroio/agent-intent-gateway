@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Any
 
+from .labels import LabelStore
 from .policy import SEVERITY, Policy
 
 
@@ -55,8 +56,9 @@ def _principal_ok(principal: str, allowed: tuple[str, ...]) -> bool:
 
 
 class Engine:
-    def __init__(self, policy: Policy):
+    def __init__(self, policy: Policy, labels: LabelStore | None = None):
         self.policy = policy
+        self.labels = labels if labels is not None else LabelStore()
 
     def evaluate(self, session: Session, tool_name: str, args: dict[str, Any] | None = None) -> Decision:
         args = args or {}
@@ -77,6 +79,13 @@ class Engine:
         tool = policy.tool(tool_name)
         if tool is None:
             return Decision("deny", (f"tool {tool_name!r} is not declared in policy",), ("identity:unknown-tool",))
+        if tool.args is not None and (extra := sorted(set(args) - set(tool.args))):
+            return Decision(
+                "deny",
+                (f"{tool_name} called with undeclared argument(s) {', '.join(extra)} "
+                 f"(declared: {', '.join(tool.args)})",),
+                ("identity:undeclared-argument",),
+            )
 
         # --- 2. intent scope ---------------------------------------------
         if (p := _matches(tool_name, agent.deny)):
@@ -111,12 +120,30 @@ class Engine:
 
         return Decision(action, tuple(reasons), tuple(rules), sink=sink)
 
-    def record(self, session: Session, tool_name: str) -> None:
-        """Call after an allowed call executes: the agent now holds what the tool returned."""
+    def record(self, session: Session, tool_name: str, args: dict[str, Any] | None = None) -> None:
+        """Call once an allowed call goes ahead.
+
+        The session picks up the labels of what the tool returns, including
+        labels stored by whoever wrote that data; writes to a shared store
+        stamp the written item with everything the session holds.
+        """
         tool = self.policy.tool(tool_name)
         if tool is None:
             return
-        for label in tool.reads:
+        args = args or {}
+
+        if tool.stores and session.labels:
+            resource = tool.resource(tool.stores, args) or tool.stores
+            self.labels.add(resource, {
+                label: f"{session.provenance.get(label, '?')}, written to {resource} by {session.agent_id}"
+                for label in session.labels
+            })
+
+        incoming = {label: tool_name for label in tool.reads}
+        if tool.loads:
+            for label, origin in self.labels.get(tool.loads, tool.resource(tool.loads, args)).items():
+                incoming.setdefault(label, f"{tool_name} <- {origin}")
+        for label, origin in incoming.items():
             if label not in session.labels:
                 session.labels.add(label)
-                session.provenance[label] = tool_name
+                session.provenance[label] = origin

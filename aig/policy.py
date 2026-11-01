@@ -9,6 +9,7 @@ behaviour), reviewed in a pull request, and diffed.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -25,13 +26,58 @@ class PolicyError(ValueError):
     """Raised when a policy document is malformed."""
 
 
+ADDRESS = re.compile(r"^[^@\s,;<>\"'()\[\]]+@[a-z0-9.-]+$")
+
+
+def _strings(value: Any) -> list[str] | None:
+    """Flatten an argument into its string leaves; None if anything isn't a string."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        out: list[str] = []
+        for v in value:
+            leaves = _strings(v)
+            if leaves is None:
+                return None
+            out += leaves
+        return out
+    return None
+
+
 @dataclass(frozen=True)
 class EgressRule:
-    """Maps a call's arguments to a sink, e.g. email to *@corp.example is internal."""
+    """Narrows a call's sink from its arguments, e.g. email to *@corp.example is internal.
 
-    arg: str
+    The rule applies only if *every* value in *every* listed argument matches,
+    so one external Bcc, or one smuggled address, keeps the call external.
+    With kind=email each value is split the way lenient mail servers split
+    recipient lists and every piece must be one well-formed address
+    (case-insensitive). Anything that fails to parse fails closed.
+    """
+
+    args: tuple[str, ...]
     pattern: str
     sink: str
+    kind: str = "glob"   # glob | email
+
+    def matches(self, call_args: dict[str, Any]) -> bool:
+        values: list[str] = []
+        for name in self.args:
+            if name not in call_args or call_args[name] in (None, "", []):
+                continue
+            leaves = _strings(call_args[name])
+            if leaves is None:
+                return False
+            values += leaves
+        if not values:
+            return False
+        if self.kind == "email":
+            pattern = self.pattern.lower()
+            tokens = [t for v in values for t in re.split(r"[,;\s]+", v) if t]
+            return bool(tokens) and all(
+                ADDRESS.match(t.lower()) and fnmatchcase(t.lower(), pattern) for t in tokens
+            )
+        return all(fnmatchcase(v, self.pattern) for v in values)
 
 
 @dataclass(frozen=True)
@@ -42,15 +88,22 @@ class Tool:
     sink: str = "internal"                # where arguments end up by default
     egress_rules: tuple[EgressRule, ...] = ()
     risk: str = "low"                     # low | high
+    args: tuple[str, ...] | None = None   # if declared, any other argument is refused
+    stores: str | None = None             # shared store this tool writes session data into
+    loads: str | None = None              # shared store this tool reads back from
+    store_key: str | None = None          # argument naming the item within the store
 
     def sink_for(self, args: dict[str, Any]) -> str:
         for rule in self.egress_rules:
-            value = args.get(rule.arg)
-            values = value if isinstance(value, list) else [value]
-            # Every value must match; one external recipient makes the call external.
-            if value is not None and all(isinstance(v, str) and fnmatchcase(v, rule.pattern) for v in values):
+            if rule.matches(args):
                 return rule.sink
         return self.sink
+
+    def resource(self, store: str, args: dict[str, Any]) -> str | None:
+        """Store item a call touches, or None for 'the whole store'."""
+        if self.store_key and isinstance(args.get(self.store_key), str):
+            return f"{store}:{args[self.store_key]}"
+        return None
 
 
 @dataclass(frozen=True)
@@ -116,20 +169,31 @@ def parse_policy(doc: dict[str, Any]) -> Policy:
     for name, spec in (doc.get("tools") or {}).items():
         spec = spec or {}
         where = f"tools.{name}"
-        rules = tuple(
-            EgressRule(arg=r["arg"], pattern=r["pattern"], sink=r["sink"])
-            for r in spec.get("egress_rules", [])
-        )
+        rules = []
+        for j, r in enumerate(spec.get("egress_rules", [])):
+            rw = f"{where}.egress_rules[{j}]"
+            names = _patterns(r.get("args", r.get("arg")), rw + ".args")
+            if not names or "pattern" not in r or "sink" not in r:
+                raise PolicyError(f"{rw}: needs args, pattern and sink")
+            kind = r.get("kind", "glob")
+            if kind not in ("glob", "email"):
+                raise PolicyError(f"{rw}.kind must be glob or email")
+            rules.append(EgressRule(args=names, pattern=r["pattern"], sink=r["sink"], kind=kind))
         risk = spec.get("risk", "low")
         if risk not in ("low", "high"):
             raise PolicyError(f"{where}.risk must be low or high")
+        declared = spec.get("args")
         tools[name] = Tool(
             name=name,
             reads=frozenset(_patterns(spec.get("reads"), f"{where}.reads")),
             writes=frozenset(_patterns(spec.get("writes"), f"{where}.writes")),
             sink=spec.get("sink", "internal"),
-            egress_rules=rules,
+            egress_rules=tuple(rules),
             risk=risk,
+            args=None if declared is None else _patterns(declared, f"{where}.args"),
+            stores=spec.get("stores"),
+            loads=spec.get("loads"),
+            store_key=spec.get("store_key"),
         )
 
     agents: dict[str, Agent] = {}
