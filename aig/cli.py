@@ -40,6 +40,12 @@ def main(argv: list[str] | None = None) -> int:
     vf = sub.add_parser("verify-log", help="verify a decision log's hash chain")
     vf.add_argument("file")
 
+    rt = sub.add_parser("redteam", help="run attack scenarios and workloads, print a scoreboard")
+    rt.add_argument("--policy", required=True)
+    rt.add_argument("--scenarios", default="scenarios")
+    rt.add_argument("--json", help="write full results as JSON")
+    rt.add_argument("--md", help="write the scoreboard as Markdown")
+
     a = p.parse_args(argv)
 
     if a.cmd == "verify-log":
@@ -52,6 +58,20 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, PolicyError) as e:
         print(f"policy error: {e}", file=sys.stderr)
         return 2
+    if a.cmd == "redteam":
+        from .redteam import load_scenarios, run_all, scoreboard, to_json, to_markdown
+
+        results = run_all(policy, load_scenarios(a.scenarios))
+        md = to_markdown(results)
+        if a.json:
+            with open(a.json, "w", encoding="utf-8") as fh:
+                fh.write(to_json(results))
+        if a.md:
+            with open(a.md, "w", encoding="utf-8") as fh:
+                fh.write(md)
+        print(md)
+        return 1 if scoreboard(results)["unexpected"] else 0
+
     engine = Engine(policy)
     session = Session(agent_id=a.agent, principal=a.principal)
 

@@ -7,6 +7,7 @@ tools:
   finance.approve_payment: { writes: [finance], risk: high }
   hr.lookup_employee:    { reads: [pii] }
   docs.search:           { reads: [internal] }
+  docs.write:            { writes: [internal] }
   web.fetch:             { reads: [untrusted], sink: external }   # query string leaves the building
   email.read_inbox:      { reads: [untrusted] }                   # inbound mail is attacker-controllable
   email.send:
@@ -20,7 +21,7 @@ agents:
   - id: expense-bot
     purpose: Reconcile employee expense reports against the ledger
     on_behalf_of: ["group:finance", "user:*@corp.example"]
-    allow: [finance.query_ledger, docs.search, email.send, email.read_inbox]
+    allow: [finance.query_ledger, docs.search, docs.write, email.send, email.read_inbox]
     require_approval: [finance.approve_payment]
 
   - id: research-assistant
