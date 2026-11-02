@@ -68,6 +68,39 @@ aig verify-log decisions.jsonl
 
 Denied calls never reach the upstream server. The agent receives a normal MCP tool result with `isError: true` and the reason, so it can recover. Out-of-scope tools are hidden from `tools/list` by default.
 
+## HTTP gateway mode (behind the AegisFlux steering gateway)
+
+`aig serve` runs the gateway as an MCP Streamable HTTP service, so it can sit behind AegisFlux's steering gateway as the content-aware layer that ADR-GW-003 leaves out of phase one:
+
+```
+agent ──captured──► steering gateway ─── only allowed MCP destination ───► aig serve ──► MCP servers
+         (eBPF/WFP)   destination control,                                  tool-level intent,
+                      per-stream token                                       data-flow labels
+```
+
+Agents use the gateway *as* their MCP server, so nothing is intercepted and no gateway CA is needed. **Identity comes only from the per-stream token**, never from the agent:
+
+| Claim | Source | Meaning |
+|---|---|---|
+| `dev`, `aiid`, `cls`, `pv`, `aud`, `exp`, `jti` | AegisFlux ADR-GW-002 | device, `agent_instance_id`, policy class, policy version, audience, expiry, nonce |
+| `agt`, `prn` | proposed extension | which intent applies, and the principal the instance acts for |
+
+Tokens are compact JWS signed with Ed25519, matching how AegisFlux already signs bundles. The gateway enforces:
+
+- signature, audience, expiry, a lifetime of minutes, the policy version, and a revocation list;
+- **session binding:** a session stays tied to the device, instance, agent and principal that opened it, so a token for anyone else gets `403`;
+- **replay:** a token id is bound to one session;
+- **class tightening:** the newest token's class applies to the very next request, so moving an instance to `quarantine` mid-session works immediately. Classes can only tighten decisions, and unknown classes are refused.
+
+```bash
+aig token keygen --out issuer                      # mock AegisFlux issuer (lab only)
+aig serve --policy examples/enterprise.yaml --key issuer.pub --audience aegis-gateway-01   # --upstream sim|URL
+aig token issue --key issuer.key --agent expense-bot --principal group:finance \
+    --class development --instance inst-42 --device dev-7 --audience aegis-gateway-01 --policy-version 2026.11.1
+```
+
+Transport: POST of single JSON-RPC messages, JSON responses, `Mcp-Session-Id`, `202` for notifications, `DELETE` to end a session, `405` for the optional GET stream, and Origin checks against DNS rebinding. The stdio proxy stays for local MCP servers, whose traffic never touches the network.
+
 ## Red team
 
 [`scenarios/`](scenarios) holds an attack library (exfiltration chains, recipient smuggling, argument smuggling, indirect prompt injection, confused deputy, spoofed agents, cross-agent laundering) and legitimate workloads that measure false positives. The harness drives every scenario through the real gateway path in front of a stateful [simulated enterprise](aig/sim/enterprise.py), with a poisoned inbox email and a ledger worth stealing, and checks what actually left the building.
@@ -99,6 +132,8 @@ Every scenario runs in CI (`tests/test_redteam.py`), so a fixed bypass can never
 - [x] Intent policy schema, engine, data-flow tainting, MCP stdio proxy, tamper-evident ledger
 - [x] Simulated enterprise, attack library, legitimate workloads
 - [x] Red-team harness: scoreboard, bypass → fix → regression test
+- [x] MCP Streamable HTTP mode with AegisFlux per-stream token identity, classes, session binding
+- [ ] Emit decisions as AegisFlux evidence events; compile Clarion `segmentation_policy_intent.v1` to gateway policy
 - [ ] Value-level tracking to remove the session-taint false positive
 - [ ] LLM-driven adversaries that generate new attack chains against the policy
 - [ ] Intent proofs: check statically that no allowed call sequence violates a stated rule

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterator
@@ -25,6 +26,7 @@ class Ledger:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self._prev = GENESIS
+        self._lock = threading.Lock()
         if self.path.exists():
             for rec in self._records():
                 self._prev = rec["hash"]
@@ -36,6 +38,10 @@ class Ledger:
                     yield json.loads(line)
 
     def append(self, event: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            return self._append(event)
+
+    def _append(self, event: dict[str, Any]) -> dict[str, Any]:
         body = {"ts": time.time(), **event, "prev": self._prev}
         record = {**body, "hash": _digest(self._prev, body)}
         self.path.parent.mkdir(parents=True, exist_ok=True)

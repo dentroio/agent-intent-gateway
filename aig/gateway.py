@@ -109,6 +109,8 @@ class Gateway:
         self.ledger.append({
             "agent": self.session.agent_id,
             "principal": self.session.principal,
+            **({"class": self.session.klass} if self.session.klass else {}),
+            **self.session.attrs,
             "tool": tool,
             "args": args,
             "decision": d.action,

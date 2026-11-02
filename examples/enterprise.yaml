@@ -1,6 +1,15 @@
 # Example intent policy for a small simulated enterprise.
 version: 1
+policy_version: "2026.11.1"   # tokens minted for another version are refused
 default: deny
+
+# Backend-assigned policy classes (AegisFlux WO-SEG-011). They arrive in the
+# per-stream token and can only tighten decisions. Unknown classes are refused.
+classes:
+  development: {}
+  research: { require_approval: ["finance.approve_payment", "ot.set_point"] }
+  privileged: {}
+  quarantine: { deny: ["*"] }
 
 tools:
   finance.query_ledger:    { reads: [finance], args: [status] }

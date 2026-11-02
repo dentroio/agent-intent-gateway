@@ -132,12 +132,26 @@ class FlowRule:
     action: str
 
 
+@dataclass(frozen=True)
+class ClassRule:
+    """Restrictions for a backend-assigned policy class (development, research, privileged, quarantine).
+
+    A class can only make decisions stricter, never looser."""
+
+    name: str
+    deny: tuple[str, ...] = ()
+    require_approval: tuple[str, ...] = ()
+
+
 @dataclass
 class Policy:
     default: str
     tools: dict[str, Tool]
     agents: dict[str, Agent]
     flows: list[FlowRule] = field(default_factory=list)
+    # None: classes not in use. Otherwise an unknown class is refused (fail closed).
+    classes: dict[str, ClassRule] | None = None
+    policy_version: str | None = None
 
     def tool(self, name: str) -> Tool | None:
         return self.tools.get(name)
@@ -228,11 +242,25 @@ def parse_policy(doc: dict[str, Any]) -> Policy:
             )
         )
 
+    classes: dict[str, ClassRule] | None = None
+    if "classes" in doc:
+        classes = {}
+        for cname, spec in (doc.get("classes") or {}).items():
+            spec = spec or {}
+            classes[cname] = ClassRule(
+                name=cname,
+                deny=_patterns(spec.get("deny"), f"classes.{cname}.deny"),
+                require_approval=_patterns(spec.get("require_approval"), f"classes.{cname}.require_approval"),
+            )
+
+    pv = doc.get("policy_version")
     return Policy(
         default=_action(doc.get("default", "deny"), "default"),
         tools=tools,
         agents=agents,
         flows=flows,
+        classes=classes,
+        policy_version=None if pv is None else str(pv),
     )
 
 

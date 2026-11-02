@@ -30,6 +30,9 @@ class Session:
     labels: set[str] = field(default_factory=set)
     # label -> tool call that introduced it, for explanations
     provenance: dict[str, str] = field(default_factory=dict)
+    klass: str | None = None    # backend-assigned policy class, from a verified token only
+    # extra identity context recorded with every decision (instance, device, token id)
+    attrs: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,18 @@ class Engine:
             )
 
         # --- 2. intent scope ---------------------------------------------
+        class_approval = None
+        # Classes come only from verified tokens; local stdio sessions have none.
+        if policy.classes is not None and session.klass is not None:
+            rule = policy.classes.get(session.klass)
+            if rule is None:
+                return Decision("deny", (f"policy class {session.klass!r} is not defined in policy",),
+                                ("class:unknown",))
+            if (p := _matches(tool_name, rule.deny)):
+                return Decision("deny", (f"class {rule.name!r} denies {p!r}",), (f"class:{rule.name}:deny",))
+            if (p := _matches(tool_name, rule.require_approval)):
+                class_approval = (f"class {rule.name!r} requires approval for {p!r}", f"class:{rule.name}:approve")
+
         if (p := _matches(tool_name, agent.deny)):
             return Decision("deny", (f"{agent.id} explicitly denied {p!r}",), (f"agent:{agent.id}:deny",))
         if (p := _matches(tool_name, agent.require_approval)):
@@ -100,6 +115,8 @@ class Engine:
             rules = ["default"]
             if action == "deny":
                 return Decision(action, tuple(reasons), tuple(rules))
+        if class_approval and action == "allow":
+            action, reasons, rules = "require_approval", [class_approval[0]], [class_approval[1]]
 
         # --- 3. data flow --------------------------------------------------
         sink = tool.sink_for(args)

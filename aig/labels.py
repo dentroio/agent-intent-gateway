@@ -14,6 +14,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -26,11 +27,13 @@ class LabelStore:
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else None
         self._mem: State = {}
+        self._lock = threading.Lock()
 
     @contextmanager
     def _state(self, write: bool) -> Iterator[State]:
         if self.path is None:
-            yield self._mem
+            with self._lock:
+                yield self._mem
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
