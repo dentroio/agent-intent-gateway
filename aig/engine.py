@@ -18,6 +18,7 @@ from fnmatch import fnmatchcase
 from typing import Any
 
 from .labels import LabelStore
+from .values import Evidence, ValueIndex
 from .policy import SEVERITY, Policy
 
 
@@ -33,6 +34,7 @@ class Session:
     klass: str | None = None    # backend-assigned policy class, from a verified token only
     # extra identity context recorded with every decision (instance, device, token id)
     attrs: dict[str, str] = field(default_factory=dict)
+    values: ValueIndex = field(default_factory=ValueIndex)   # value-level tracking (aig.values)
 
 
 @dataclass(frozen=True)
@@ -121,21 +123,54 @@ class Engine:
         # --- 3. data flow --------------------------------------------------
         sink = tool.sink_for(args)
         targets = {sink, f"risk:{tool.risk}", *(f"writes:{w}" for w in tool.writes)}
+        present: dict[str, Evidence] | None = None   # computed once, only if a value rule needs it
         for flow in policy.flows:
             if flow.from_ not in session.labels:
                 continue
             if flow.action == "allow" or not any(fnmatchcase(t, flow.to) for t in targets):
                 continue  # flow rules only ever tighten a decision
             origin = session.provenance.get(flow.from_, "an earlier call")
-            reason = (f"session holds {flow.from_!r} data (from {origin}); "
-                      f"flow to {flow.to!r} is {flow.action.replace('_', ' ')}")
-            if SEVERITY[flow.action] > SEVERITY[action]:
-                action, reasons, rules = flow.action, [reason], [f"flow:{flow.id}"]
-            elif SEVERITY[flow.action] == SEVERITY[action] and action != "allow":
+            verb = flow.action.replace("_", " ")
+            if flow.precision == "value":
+                if present is None:
+                    present = session.values.find(args)
+                if flow.from_ in present:
+                    effective = flow.action
+                    reason = f"{present[flow.from_].describe()}; flow to {flow.to!r} is {verb}"
+                    rule = f"flow:{flow.id}"
+                else:
+                    effective = flow.residual
+                    reason = (f"session holds {flow.from_!r} data (from {origin}) but no {flow.from_!r} "
+                              f"values were found in the arguments; residual action is "
+                              f"{effective.replace('_', ' ')}")
+                    rule = f"flow:{flow.id}:residual"
+                if effective == "allow":
+                    continue
+            else:
+                effective = flow.action
+                reason = f"session holds {flow.from_!r} data (from {origin}); flow to {flow.to!r} is {verb}"
+                rule = f"flow:{flow.id}"
+            if SEVERITY[effective] > SEVERITY[action]:
+                action, reasons, rules = effective, [reason], [rule]
+            elif SEVERITY[effective] == SEVERITY[action] and action != "allow":
                 reasons.append(reason)
-                rules.append(f"flow:{flow.id}")
+                rules.append(rule)
 
         return Decision(action, tuple(reasons), tuple(rules), sink=sink)
+
+    def observe(self, session: Session, tool_name: str, args: dict[str, Any] | None, result_text: str) -> None:
+        """Index the values in a tool result under the labels it carries."""
+        tool = self.policy.tool(tool_name)
+        if tool is None or not result_text:
+            return
+        session.values.add(result_text, self._incoming(tool, tool_name, args or {}))
+
+    def _incoming(self, tool, tool_name: str, args: dict[str, Any]) -> dict[str, str]:
+        incoming = {label: tool_name for label in tool.reads}
+        if tool.loads:
+            for label, origin in self.labels.get(tool.loads, tool.resource(tool.loads, args)).items():
+                incoming.setdefault(label, f"{tool_name} <- {origin}")
+        return incoming
 
     def record(self, session: Session, tool_name: str, args: dict[str, Any] | None = None) -> None:
         """Call once an allowed call goes ahead.
@@ -156,11 +191,7 @@ class Engine:
                 for label in session.labels
             })
 
-        incoming = {label: tool_name for label in tool.reads}
-        if tool.loads:
-            for label, origin in self.labels.get(tool.loads, tool.resource(tool.loads, args)).items():
-                incoming.setdefault(label, f"{tool_name} <- {origin}")
-        for label, origin in incoming.items():
+        for label, origin in self._incoming(tool, tool_name, args).items():
             if label not in session.labels:
                 session.labels.add(label)
                 session.provenance[label] = origin

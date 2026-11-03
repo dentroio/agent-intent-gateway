@@ -12,8 +12,10 @@ stays in the library and CI fails if it ever gets through again.
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
+from urllib.parse import quote
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -26,7 +28,16 @@ from ..gateway import Gateway
 from ..policy import Policy
 from ..sim import Enterprise
 
-TEMPLATE = re.compile(r"\{\{(\w+)\}\}")
+TEMPLATE = re.compile(r"\{\{(\w+)(?:\|(\w+))?\}\}")
+
+# Disguises an attacker (or a compromised agent) can apply to stolen data.
+FILTERS = {
+    "b64": lambda s: base64.b64encode(s.encode()).decode(),
+    "hex": lambda s: s.encode().hex(),
+    "url": lambda s: quote(s, safe=""),
+    "spaced": lambda s: " ".join(s),
+    "upper": str.upper,
+}
 
 
 @dataclass
@@ -69,7 +80,7 @@ def load_scenarios(path: str | Path) -> list[dict]:
 
 def _fill(value: Any, outputs: dict[str, str]) -> Any:
     if isinstance(value, str):
-        return TEMPLATE.sub(lambda m: outputs.get(m.group(1), ""), value)
+        return TEMPLATE.sub(lambda m: FILTERS.get(m.group(2) or "", lambda x: x)(outputs.get(m.group(1), "")), value)
     if isinstance(value, list):
         return [_fill(v, outputs) for v in value]
     if isinstance(value, dict):
@@ -126,6 +137,7 @@ def run_scenario(policy: Policy, spec: dict) -> ScenarioResult:
             stopped_at = i
             break
         result = ent.call(tool, args)
+        gw.from_server({"jsonrpc": "2.0", "id": i, "result": result})   # the gateway sees every result
         text = result["content"][0]["text"]
         outputs[tool.split(".")[-1].replace("query_", "")] = text   # finance.query_ledger -> "ledger"
         outputs[tool.split(".")[0]] = text                          # docs.search -> "docs"

@@ -7,7 +7,7 @@ agent  <--MCP stdio-->  aig proxy  <--MCP stdio-->  upstream MCP server
                            │
                            ├─ identity:  known agent? acting for an allowed principal?
                            ├─ intent:    tool inside the agent's declared purpose?
-                           ├─ data flow: given what this session already read, may data reach this sink?
+                           ├─ data flow: does this call carry data that may not reach this sink?
                            └─ ledger:    hash-chained, tamper-evident decision log
 ```
 
@@ -17,12 +17,29 @@ Most agent guardrails decide each tool call on its own. Real attacks chain allow
 
 | Attack | Each call alone | Gateway outcome |
 |---|---|---|
-| Read ledger, then email it to an outside address | both allowed | **deny**: session holds `finance` data, flow to `external` is denied |
+| Read ledger, then email it to an outside address | both allowed | **deny**: `body` carries `finance` values (`'tx1042'`, …) from `finance.query_ledger` |
+| Same, but base64 / hex / URL-encoded / spaced out | both allowed | **deny**: the gateway decodes and normalises before matching |
 | Read a poisoned inbound email, then approve a payment | read allowed, payment needs approval | **deny**: `untrusted` content may not drive `risk:high` actions |
 | Agent invoked by someone it doesn't serve (confused deputy) | tool allowed | **deny**: principal not in `on_behalf_of` |
 | Mixed recipients: one internal, one external | looks internal | **deny**: one external recipient makes the call external |
 
-Every decision carries plain-language reasons and the rule IDs that produced it, including where tainting data came from (`session holds 'finance' data (from finance.query_ledger)`).
+Every decision carries plain-language reasons and the rule IDs that produced it, including which argument carried which values and where they came from.
+
+## Value-level data flow
+
+Research systems such as Google DeepMind's CaMeL and Microsoft's FIDES showed that tracking where data came from is the principled defence for agents, but they live inside the agent, so the agent has to be rebuilt around them. MCP gateways work with unmodified agents but judge each call on its own. AIG does information-flow control **outside the agent**, in front of any MCP client:
+
+1. Labelled tool results passing back through the gateway are broken into values: identifiers, amounts, emails and distinctive words, keyed by JSON value only, never field names.
+2. Outgoing arguments are decoded (URL, HTML, base64, hex, nested JSON) and normalised (case, Unicode, spacing, punctuation), then matched against those values with a prefix index. That takes about 3.5 ms per call against a 75,000-value index.
+3. A flow rule with `precision: value` applies its `action` only when the call carries values of that label. If the session has seen the label but sends none of it, the rule's `residual` action applies instead (`allow`, `require_approval` or `deny`; default `require_approval`).
+
+```yaml
+flows:
+  - { id: no-finance-egress, from: finance, to: external, action: deny, precision: value, residual: allow }
+  - { id: untrusted-no-high-risk, from: untrusted, to: "risk:high", action: deny }   # stays session-level
+```
+
+**What it can't see, by design:** data an LLM has rewritten in new words ("the cloud vendor is owed about seventy-two thousand"). That gap is a scenario in the red team (`ATK-ENC-007`) rather than a hidden assumption. Policies that can't accept it keep `precision: session` or use `residual: require_approval`. **Integrity rules should stay session-level:** whether injected text *influenced* a decision isn't visible in values. If the per-session index fills up, affected labels fail closed back to session-level behaviour.
 
 ## Policy
 
@@ -115,7 +132,7 @@ The first run against the v0.1 engine ([`reports/baseline.md`](reports/baseline.
 | Invented `forward_to` argument | tools can declare their arguments; anything else is refused |
 | Finance agent writes the ledger into shared docs, research agent reads it and posts it out | **labels follow data through shared stores**, across agents and gateway processes |
 
-Current result ([`reports/scoreboard.md`](reports/scoreboard.md)): **17/17 attacks blocked, 9/10 workloads complete.** The remaining false positive is documented: replying to a vendor after reading the ledger is refused, because session-level tainting can't see that the reply carries no ledger data.
+Current result ([`reports/scoreboard.md`](reports/scoreboard.md)): **23 of 24 attacks blocked, 11 of 11 workloads complete.** Value-level tracking removed the last false positive: replying to a vendor after reading the ledger now works. It also blocks six disguised-exfiltration attacks (base64, hex, URL-encoding, character spacing, reformatted amounts, vendor names). The one attack that gets through is the documented paraphrase gap above.
 
 Every scenario runs in CI (`tests/test_redteam.py`), so a fixed bypass can never quietly return.
 
@@ -134,7 +151,8 @@ Every scenario runs in CI (`tests/test_redteam.py`), so a fixed bypass can never
 - [x] Red-team harness: scoreboard, bypass → fix → regression test
 - [x] MCP Streamable HTTP mode with AegisFlux per-stream token identity, classes, session binding
 - [ ] Emit decisions as AegisFlux evidence events; compile Clarion `segmentation_policy_intent.v1` to gateway policy
-- [ ] Value-level tracking to remove the session-taint false positive
+- [x] Value-level tracking outside the agent: decoding, normalisation, residual actions
+- [ ] Semantic matching for paraphrase (probabilistic; would sit behind `residual`, never replace deterministic matches)
 - [ ] LLM-driven adversaries that generate new attack chains against the policy
 - [ ] Intent proofs: check statically that no allowed call sequence violates a stated rule
 - [ ] Live dashboard

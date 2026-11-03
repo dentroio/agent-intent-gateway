@@ -45,6 +45,8 @@ class Gateway:
         self.approver = approver
         self.hide_out_of_scope = hide_out_of_scope
         self._pending_lists: set[Any] = set()
+        # request id -> forwarded tool calls awaiting results (a list: ids may be reused)
+        self._pending_calls: dict[Any, list[tuple[str, dict]]] = {}
         self._lock = threading.Lock()
 
     # -- agent -> server ------------------------------------------------------
@@ -70,6 +72,8 @@ class Gateway:
                 # Conservative: label the session at decision time, before the
                 # result exists, so a racing second call can't slip past.
                 self.engine.record(self.session, tool, args)
+                if "id" in msg:
+                    self._pending_calls.setdefault(_key(msg["id"]), []).append((tool, args))
             self._log(tool, args, decision, final)
 
         if final == "allow":
@@ -82,6 +86,13 @@ class Gateway:
             is_list = msg.get("id") in self._pending_lists
             if is_list:
                 self._pending_lists.discard(msg["id"])
+            queue = self._pending_calls.get(_key(msg.get("id")))
+            if queue:
+                tool, args = queue.pop(0)
+                if not queue:
+                    del self._pending_calls[_key(msg.get("id"))]
+                for part in _result_parts(msg):
+                    self.engine.observe(self.session, tool, args, part)
         if is_list and self.hide_out_of_scope and isinstance(msg.get("result"), dict):
             tools = msg["result"].get("tools") or []
             msg["result"]["tools"] = [t for t in tools if self._in_scope(t.get("name", ""))]
@@ -120,6 +131,28 @@ class Gateway:
             "sink": d.sink,
             "session_labels": sorted(self.session.labels),
         })
+
+
+def _key(req_id: Any) -> str:
+    return json.dumps(req_id)   # 1 and "1" are different JSON-RPC ids
+
+
+def _result_parts(msg: dict) -> list[str]:
+    """Everything a tool result hands the agent, as text parts, for value indexing."""
+    parts: list[str] = []
+    result = msg.get("result")
+    if isinstance(result, dict):
+        for item in result.get("content") or []:
+            if isinstance(item, dict):
+                if isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+                elif isinstance(item.get("resource"), dict) and isinstance(item["resource"].get("text"), str):
+                    parts.append(item["resource"]["text"])
+        if "structuredContent" in result:
+            parts.append(json.dumps(result["structuredContent"]))
+    elif isinstance(msg.get("error"), dict):
+        parts.append(str(msg["error"].get("message", "")))
+    return parts
 
 
 def _pump(src: IO[str], dst: IO[str], handle: Callable[[dict], list[tuple[IO[str], dict]]], raw_dst: IO[str]) -> None:

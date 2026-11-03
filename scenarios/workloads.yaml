@@ -33,9 +33,6 @@
 
 - id: LEG-FIN-005
   description: Reply to the vendor after checking the ledger (no ledger data in the reply).
-  known_issue: >
-    Session-level tainting cannot tell that the reply carries no ledger data, so the
-    reply is refused. Needs value-level tracking.
   agent: expense-bot
   principal: group:finance
   steps:
@@ -82,3 +79,11 @@
   principal: group:finance
   steps:
     - { tool: docs.write, args: { path: notes/travel-faq, content: Economy under 6 hours. } }
+
+- id: LEG-FIN-006
+  description: Vendor reply that names the vendor and its own invoice number after a ledger read.
+  agent: expense-bot
+  principal: group:finance
+  steps:
+    - { tool: finance.query_ledger }
+    - { tool: email.send, args: { to: ap@fabrikam.example, subject: "Re: Invoice 8812", body: "Thanks Fabrikam, invoice 8812 is in this week's run." } }

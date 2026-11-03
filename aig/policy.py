@@ -124,12 +124,21 @@ class FlowRule:
     "risk:<level>" and "writes:<label>" pseudo-sinks, so a rule like
     `from: untrusted, to: risk:high` stops prompt-injected content from
     driving high-risk actions.
+
+    precision: session (default) applies the rule whenever the session holds
+    the label. precision: value applies `action` only when the call's
+    arguments actually carry values from that label (aig.values), and
+    `residual` when the session holds the label but none of its values were
+    found. Use value precision for confidentiality; keep integrity rules
+    (untrusted -> high risk) session-level.
     """
 
     id: str
     from_: str
     to: str
     action: str
+    precision: str = "session"
+    residual: str = "require_approval"
 
 
 @dataclass(frozen=True)
@@ -233,12 +242,24 @@ def parse_policy(doc: dict[str, Any]) -> Policy:
 
     flows = []
     for i, spec in enumerate(doc.get("flows") or []):
+        where = f"flows[{i}]"
+        precision = spec.get("precision", "session")
+        if precision not in ("session", "value"):
+            raise PolicyError(f"{where}.precision must be session or value")
+        if "residual" in spec and precision != "value":
+            raise PolicyError(f"{where}: residual only applies with precision: value")
+        action = _action(spec.get("action"), where)
+        residual = _action(spec.get("residual", "require_approval"), f"{where}.residual")
+        if SEVERITY[residual] > SEVERITY[action]:
+            raise PolicyError(f"{where}: residual must not be stricter than action")
         flows.append(
             FlowRule(
                 id=spec.get("id", f"flow-{i}"),
                 from_=spec["from"],
                 to=spec["to"],
-                action=_action(spec.get("action"), f"flows[{i}]"),
+                action=action,
+                precision=precision,
+                residual=residual,
             )
         )
 

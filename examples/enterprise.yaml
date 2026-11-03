@@ -49,7 +49,10 @@ agents:
     require_approval: [ot.set_point]
 
 flows:
-  - { id: no-finance-egress,  from: finance,   to: external,  action: deny }
+  # Value precision: deny when the call carries ledger values (even encoded or
+  # mangled); allow when the agent has seen the ledger but sends none of it.
+  # Residual risk, documented in the red team: LLM paraphrase of the data.
+  - { id: no-finance-egress,  from: finance,   to: external,  action: deny, precision: value, residual: allow }
   - { id: no-pii-egress,      from: pii,       to: external,  action: deny }
   - { id: no-ot-egress,       from: ot,        to: external,  action: deny }
   - { id: internal-stays-in,  from: internal,  to: external,  action: require_approval }
