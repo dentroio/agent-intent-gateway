@@ -193,7 +193,7 @@ Every scenario runs in CI (`tests/test_redteam.py`), so a fixed bypass can never
 - [x] Red-team harness: scoreboard, bypass → fix → regression test
 - [x] MCP Streamable HTTP mode with AegisFlux per-stream token identity, classes, session binding
 - [x] Compile Clarion `segmentation_policy_intent.v1` to signed `proxy_broker` overlays; emit AegisFlux outcome events
-- [ ] Demo page: scoreboard, attack chains with provenance, decision log verification
+- [x] Demo page ([`docs/demo/`](docs/demo), rebuilt from real runs by `python scripts/build_demo.py`)
 - [x] Value-level tracking outside the agent: decoding, normalisation, residual actions
 - [ ] Semantic matching for paraphrase (probabilistic; would sit behind `residual`, never replace deterministic matches)
 - [ ] LLM-driven adversaries that generate new attack chains against the policy

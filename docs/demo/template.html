@@ -1,0 +1,460 @@
+<title>Agent Intent Gateway</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..100,500..800&family=Public+Sans:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a technical case file. Verdict first, then the evidence, read top to bottom. One column, wide tables scroll in place. */
+:root {
+  --paper: #f1f3f6;
+  --panel: #ffffff;
+  --ink: #111a23;
+  --muted: #586572;
+  --line: #d3d9e0;
+  --accent: #1f4fd8;
+  --block: #b3261e;
+  --allow: #1c7543;
+  --ask: #9a5800;
+  --observe: #4c5c6c;
+  --code: #e7ebf0;
+  --tint-block: #fbeceb;
+  --tint-allow: #e8f4ed;
+  --tint-ask: #fbf1e3;
+  --display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --body: "Public Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0e141b; --panel: #151d26; --ink: #e3e9ef; --muted: #93a1af; --line: #283340;
+    --accent: #84a3ff; --block: #ff8b80; --allow: #6ed29a; --ask: #f0b45a; --observe: #a8b5c2;
+    --code: #1b2430; --tint-block: #3a1d1c; --tint-allow: #16301f; --tint-ask: #36280f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0e141b; --panel: #151d26; --ink: #e3e9ef; --muted: #93a1af; --line: #283340;
+  --accent: #84a3ff; --block: #ff8b80; --allow: #6ed29a; --ask: #f0b45a; --observe: #a8b5c2;
+  --code: #1b2430; --tint-block: #3a1d1c; --tint-allow: #16301f; --tint-ask: #36280f;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink);
+  font: 400 15px/1.55 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 40px 64px; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--display); font-stretch: 78%; text-wrap: balance; margin: 0; line-height: 1.1; }
+h1 { font-size: clamp(2.3rem, 6vw, 3.6rem); font-weight: 800; letter-spacing: -0.01em; }
+h2 { font-size: clamp(1.5rem, 3.2vw, 2rem); font-weight: 750; }
+h3 { font-size: 1.15rem; font-weight: 700; font-stretch: 85%; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 600 0.72rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.12rem; color: var(--ink); }
+.muted { color: var(--muted); }
+a { color: var(--accent); }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+section { display: grid; gap: 20px; min-width: 0; }
+.section-head { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 22px; }
+
+/* header */
+header { display: grid; gap: 14px; }
+.thesis { font-size: 1.2rem; max-width: 62ch; }
+
+/* scoreboard */
+.score { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.cfg { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px 18px 16px; display: grid; gap: 10px; align-content: start; }
+.cfg.best { border-color: var(--accent); }
+.cfg-name { font: 700 1.05rem/1.2 var(--display); font-stretch: 85%; }
+.big { font: 800 3.1rem/1 var(--display); font-stretch: 70%; font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 6px; }
+.big small { font-size: 1.25rem; font-weight: 600; color: var(--muted); }
+.big-label { font-size: 0.82rem; color: var(--muted); margin-top: -4px; }
+.bar { height: 6px; border-radius: 3px; background: var(--code); overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--allow); }
+.bar.attacks > span { background: var(--accent); }
+.wl { font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+.cfg p { font-size: 0.86rem; color: var(--muted); }
+
+/* matrix */
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 0.72rem/1.3 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cell { display: inline-flex; align-items: center; gap: 6px; font: 600 0.8rem/1 var(--mono); padding: 4px 7px; border-radius: 4px; }
+.cell.full { background: var(--tint-allow); color: var(--allow); }
+.cell.none { background: var(--tint-block); color: var(--block); }
+.cell.part { background: var(--tint-ask); color: var(--ask); }
+
+/* pills */
+.pill { display: inline-block; font: 600 0.7rem/1 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; padding: 4px 7px; border-radius: 999px; white-space: nowrap; border: 1px solid currentColor; }
+.p-block { color: var(--block); } .p-allow { color: var(--allow); } .p-ask { color: var(--ask); } .p-observe { color: var(--observe); }
+
+/* explorer */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tab, .chip, button.act { font: 600 0.82rem/1 var(--body); border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 8px 12px; border-radius: 5px; cursor: pointer; }
+.tab[aria-pressed="true"], .chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.tab:focus-visible, .chip:focus-visible, button:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.explorer { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.list { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; max-height: 640px; overflow-y: auto; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; background: transparent; width: 100%; text-align: left; border-left: 3px solid transparent; color: inherit; font: inherit; border-top: 0; border-right: 0; }
+.row:last-child { border-bottom: 0; }
+.row[aria-selected="true"] { border-left-color: var(--accent); background: var(--code); }
+.row .id { font: 600 0.78rem/1.3 var(--mono); }
+.row .tech { grid-column: 1 / -1; font-size: 0.8rem; color: var(--muted); }
+.detail { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 20px; display: grid; gap: 16px; min-width: 0; }
+.steps { display: grid; gap: 0; counter-reset: step; }
+.step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 12px; padding: 14px 0; border-top: 1px dashed var(--line); }
+.step:first-child { border-top: 0; padding-top: 4px; }
+.step .n { font: 600 0.8rem/1.6 var(--mono); color: var(--muted); }
+.step .who { font-size: 0.82rem; color: var(--muted); }
+.call { font: 400 0.82rem/1.5 var(--mono); background: var(--code); border-radius: 4px; padding: 8px 10px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.call b { font-weight: 600; }
+.why { font-size: 0.9rem; }
+.why.block { color: var(--block); } .why.ask { color: var(--ask); }
+.note { border-left: 3px solid var(--ask); background: var(--tint-ask); padding: 10px 12px; font-size: 0.88rem; border-radius: 0 4px 4px 0; }
+.escaped { border-left: 3px solid var(--block); background: var(--tint-block); padding: 10px 12px; font-size: 0.86rem; border-radius: 0 4px 4px 0; overflow-wrap: anywhere; }
+.skipped { color: var(--muted); font-style: italic; font-size: 0.86rem; }
+
+/* session + log */
+.session { display: grid; gap: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.srow { display: grid; grid-template-columns: 34px minmax(0, 170px) minmax(0, 1fr) auto; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line); align-items: baseline; font-size: 0.88rem; }
+.srow:last-child { border-bottom: 0; }
+.srow .k { font: 600 0.78rem/1.4 var(--mono); color: var(--muted); }
+.srow .t { font-family: var(--mono); font-size: 0.82rem; overflow-wrap: anywhere; }
+.srow .r { grid-column: 3 / -1; font-size: 0.82rem; color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button.act.primary { background: var(--accent); color: var(--paper); border-color: var(--accent); }
+.status { font: 600 0.9rem/1.4 var(--body); padding: 10px 14px; border-radius: 5px; }
+.status.ok { background: var(--tint-allow); color: var(--allow); }
+.status.bad { background: var(--tint-block); color: var(--block); }
+.status.wait { background: var(--code); color: var(--muted); }
+tr.clickable { cursor: pointer; }
+tr.sel td { background: var(--code); }
+tr.after td { color: var(--muted); }
+tr.broken td { background: var(--tint-block); color: var(--block); }
+.hash { font-family: var(--mono); font-size: 0.78rem; white-space: nowrap; }
+pre.json { margin: 0; font: 400 0.78rem/1.5 var(--mono); background: var(--code); border-radius: 6px; padding: 14px; overflow-x: auto; max-height: 420px; }
+
+/* intents + events */
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.card ul { margin: 0; padding-left: 18px; font-size: 0.84rem; display: grid; gap: 4px; }
+.card .id { font: 600 0.75rem/1.3 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.flow { display: grid; grid-template-columns: repeat(5, auto); gap: 8px; align-items: center; justify-content: start; font-size: 0.86rem; overflow-x: auto; padding-bottom: 4px; }
+.node { border: 1px solid var(--line); background: var(--panel); border-radius: 5px; padding: 10px 12px; display: grid; gap: 2px; min-width: 150px; }
+.node b { font-family: var(--display); font-stretch: 85%; font-size: 1rem; }
+.node span { font: 400 0.72rem/1.3 var(--mono); color: var(--muted); }
+.node.aig { border-color: var(--accent); }
+.arrow { font: 600 0.72rem/1.2 var(--mono); color: var(--muted); text-align: center; }
+.limits { display: grid; gap: 10px; }
+.limits li { max-width: 80ch; }
+footer { border-top: 1px solid var(--line); padding-top: 18px; font-size: 0.82rem; color: var(--muted); display: grid; gap: 4px; }
+
+@media (max-width: 860px) {
+  .score, .grid3 { grid-template-columns: 1fr; }
+  .explorer { grid-template-columns: 1fr; }
+  .list { max-height: 320px; }
+  .srow { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .srow .k:nth-child(2) { grid-column: 2 / 3; }
+  .srow .t { grid-column: 2 / 3; }
+  .srow .r { grid-column: 2 / -1; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bar > span { transition: width 600ms ease-out; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow" id="provenance">Lab results</div>
+    <h1>Agent Intent Gateway</h1>
+    <p class="thesis">Most agent security judges each tool call on its own. Real attacks chain calls that are each allowed. AIG decides where data may go across calls and across agents, in front of unmodified MCP agents, and it shows its evidence.</p>
+  </header>
+
+  <section aria-labelledby="h-score">
+    <div class="section-head">
+      <div class="eyebrow">Red team · same attacks, same workloads, three gateways</div>
+      <h2 id="h-score">What each approach stops</h2>
+      <p class="muted">Every scenario runs through the real gateway in front of a simulated enterprise with a ledger worth stealing and a poisoned inbox. An attack counts as blocked only if a step is refused. Legitimate workloads measure what the protection costs.</p>
+    </div>
+    <div class="score" id="score"></div>
+  </section>
+
+  <section aria-labelledby="h-matrix">
+    <div class="section-head">
+      <div class="eyebrow">By technique</div>
+      <h2 id="h-matrix">Where the difference comes from</h2>
+    </div>
+    <div class="scroll"><table id="matrix"></table></div>
+  </section>
+
+  <section aria-labelledby="h-explore">
+    <div class="section-head">
+      <div class="eyebrow">Every scenario, step by step</div>
+      <h2 id="h-explore">Attack chains and the reasons behind each decision</h2>
+      <p class="muted">Pick a gateway, then a scenario. Each step shows the call, the decision, and the reason the gateway gave the agent.</p>
+    </div>
+    <div class="tabs" role="group" aria-label="Gateway configuration" id="cfg-tabs"></div>
+    <div class="tabs" role="group" aria-label="Filter scenarios" id="filters"></div>
+    <div class="explorer">
+      <div class="list" id="list" role="listbox" aria-label="Scenarios"></div>
+      <div class="detail" id="detail" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-log">
+    <div class="section-head">
+      <div class="eyebrow">One recorded session · AIG + Clarion intent</div>
+      <h2 id="h-log">A log you can try to falsify</h2>
+      <p class="muted">Three agents, eleven tool calls through one gateway. Every decision is chained to the one before it with SHA-256, so editing or deleting a record breaks the chain from that point. Verification runs in your browser.</p>
+    </div>
+    <div class="session" id="session"></div>
+    <div class="controls">
+      <button class="act primary" id="btn-verify" type="button">Verify chain</button>
+      <button class="act" id="btn-tamper" type="button">Cover up a block (edit record 3)</button>
+      <button class="act" id="btn-delete" type="button">Delete record 5</button>
+      <button class="act" id="btn-reset" type="button">Restore original</button>
+    </div>
+    <div class="status wait" id="verify-status" role="status">Verifying…</div>
+    <div class="scroll"><table id="log"></table></div>
+    <pre class="json" id="record" aria-label="Selected record"></pre>
+  </section>
+
+  <section aria-labelledby="h-fit">
+    <div class="section-head">
+      <div class="eyebrow">Integration · contracts read, not changed</div>
+      <h2 id="h-fit">Clarion intent in, AegisFlux evidence out</h2>
+      <p class="muted">AIG compiles Clarion intents into signed gateway rules and reports each intent-driven decision as an AegisFlux outcome event. It runs standalone; both products' contracts are pinned copies.</p>
+    </div>
+    <div class="flow" aria-label="Integration flow">
+      <div class="node"><b>Clarion</b><span>segmentation_policy_intent.v1</span></div>
+      <div class="arrow">compile<br>sign →</div>
+      <div class="node aig"><b>AIG</b><span>proxy_broker overlay</span></div>
+      <div class="arrow">outcome<br>events →</div>
+      <div class="node"><b>AegisFlux</b><span>segmentation_outcome_event.v1</span></div>
+    </div>
+    <h3>Intents compiled for this run</h3>
+    <div class="grid3" id="intents"></div>
+    <h3>What AegisFlux receives</h3>
+    <p class="muted">Events carry no data values, only a redacted reason. The full reason stays in the local log, referenced by hash. Every block cites the approved change that authorised it.</p>
+    <div class="scroll"><table id="events"></table></div>
+    <pre class="json" id="event-json"></pre>
+  </section>
+
+  <section aria-labelledby="h-diff">
+    <div class="section-head">
+      <div class="eyebrow">Market · as publicly described, November 2026</div>
+      <h2 id="h-diff">What is different</h2>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Approach</th><th>Examples</th><th>Decides on</th><th>What it misses</th></tr></thead>
+        <tbody>
+          <tr><td>MCP gateways</td><td>Obot, Runlayer, MCP Manager, cloud-provider gateways</td><td>Who is calling and which tool, one call at a time</td><td>Chains of allowed calls; data moving between agents</td></tr>
+          <tr><td>AI guardrails</td><td>Cisco AI Defense, PointGuard, Aurascape</td><td>Classifier scores on prompts and tool calls</td><td>Deterministic, explainable decisions about where data may go</td></tr>
+          <tr><td>Static flow analysis</td><td>Snyk Toxic Flow Analysis</td><td>Risky tool combinations, before deployment</td><td>Enforcement at runtime</td></tr>
+          <tr><td>Research information-flow control</td><td>Google DeepMind CaMeL, Microsoft FIDES</td><td>Where each value came from, inside the agent</td><td>Unmodified agents: the agent has to be rebuilt around it</td></tr>
+          <tr><td><b>AIG</b></td><td>This prototype</td><td>Where data may go, across calls and agents, in front of any MCP agent; identity from the endpoint; tested continuously by its own red team</td><td>See limits below</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Limits</h3>
+    <ul class="limits">
+      <li><b>Paraphrase.</b> Data an LLM rewrites in new words carries none of the original values. Value-level rules either let it through (<code>residual: allow</code>) or ask a human. That is the one bypass in the hand-tuned run.</li>
+      <li><b>Prompt-injection influence.</b> Whether injected text steered a decision is not visible in values, so integrity rules stay session-level and stricter than strictly needed.</li>
+      <li><b>Lab identity.</b> Tokens come from a mock issuer shaped after the AegisFlux design. Production identity waits on the AegisFlux token issuer and steering gateway.</li>
+      <li><b>Prototype.</b> Python, one simulated enterprise, scripted attacks. Competitor descriptions come from public and vendor sources and were not tested here.</li>
+    </ul>
+  </section>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>/*__CHAIN_JS__*/</script>
+<script>
+const DATA = /*__DATA__*/null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const VERDICT = { blocked: ["Blocked", "p-allow"], bypass: ["Bypass", "p-block"], completed: ["Completed", "p-allow"], false_positive: ["Refused", "p-ask"] };
+const OUTCOME = { allow: ["Allowed", "p-allow"], deny: ["Refused", "p-block"] };
+const state = { cfg: "aig", filter: "all", id: "ATK-LAU-001" };
+
+function pill(label, cls) { return `<span class="pill ${cls}">${esc(label)}</span>`; }
+
+/* ---------- scoreboard ---------- */
+function renderScore() {
+  const best = DATA.configs.reduce((b, c) => c.scoreboard.attacks.blocked > b.scoreboard.attacks.blocked ? c : b);
+  $("score").innerHTML = DATA.configs.map(c => {
+    const a = c.scoreboard.attacks, w = c.scoreboard.workloads;
+    return `<div class="cfg${c === best ? " best" : ""}">
+      <div class="cfg-name">${esc(c.name)}</div>
+      <div><div class="big">${a.blocked}<small>/ ${a.total}</small></div><div class="big-label">attacks blocked</div></div>
+      <div class="bar attacks" aria-hidden="true"><span style="width:${(100 * a.blocked / a.total).toFixed(1)}%"></span></div>
+      <div class="wl"><b>${w.completed} / ${w.total}</b> legitimate workloads ran without a human${w.false_positives.length ? ` <span class="muted">(${w.false_positives.map(esc).join(", ")} need approval)</span>` : ""}</div>
+      <div class="bar" aria-hidden="true"><span style="width:${(100 * w.completed / w.total).toFixed(1)}%"></span></div>
+      <p>${esc(c.description)}</p>
+    </div>`;
+  }).join("");
+}
+
+/* ---------- matrix ---------- */
+function renderMatrix() {
+  const techs = [...new Set(DATA.configs[0].results.filter(r => r.kind === "attack").map(r => r.technique))].sort();
+  const cell = (b, t) => `<span class="cell ${b === t ? "full" : b === 0 ? "none" : "part"}">${b}/${t}</span>`;
+  const head = `<thead><tr><th>Technique</th>${DATA.configs.map(c => `<th>${esc(c.name)}</th>`).join("")}</tr></thead>`;
+  const rows = techs.map(t => `<tr><td>${esc(t.replace("/", " · "))}</td>${DATA.configs.map(c => {
+    const rs = c.results.filter(r => r.technique === t);
+    return `<td class="num">${cell(rs.filter(r => r.verdict === "blocked").length, rs.length)}</td>`;
+  }).join("")}</tr>`).join("");
+  const wl = `<tr><td><b>Legitimate workloads completed</b></td>${DATA.configs.map(c => {
+    const w = c.scoreboard.workloads; return `<td class="num">${cell(w.completed, w.total)}</td>`;
+  }).join("")}</tr>`;
+  $("matrix").innerHTML = head + `<tbody>${rows}${wl}</tbody>`;
+}
+
+/* ---------- explorer ---------- */
+const FILTERS = [["all", "All"], ["attack", "Attacks"], ["workload", "Workloads"], ["diff", "Where the gateways disagree"]];
+function cfg() { return DATA.configs.find(c => c.key === state.cfg); }
+function differs(id) { const v = DATA.configs.map(c => c.results.find(r => r.id === id).verdict); return new Set(v).size > 1; }
+
+function renderTabs() {
+  $("cfg-tabs").innerHTML = DATA.configs.map(c => `<button class="tab" type="button" data-cfg="${c.key}" aria-pressed="${c.key === state.cfg}">${esc(c.name)}</button>`).join("");
+  $("filters").innerHTML = FILTERS.map(([k, l]) => `<button class="chip" type="button" data-filter="${k}" aria-pressed="${k === state.filter}">${l}</button>`).join("");
+}
+function visible() {
+  return cfg().results.filter(r => state.filter === "all" || r.kind === state.filter || (state.filter === "diff" && differs(r.id)));
+}
+function renderList() {
+  const rs = visible();
+  if (!rs.some(r => r.id === state.id) && rs.length) state.id = rs[0].id;
+  $("list").innerHTML = rs.map(r => {
+    const [label, cls] = VERDICT[r.verdict];
+    return `<button class="row" type="button" role="option" data-id="${r.id}" aria-selected="${r.id === state.id}">
+      <span class="id">${esc(r.id)}</span>${pill(r.known_issue && r.kind === "attack" ? "Known gap" : label, r.known_issue && r.kind === "attack" ? "p-ask" : cls)}
+      <span class="tech">${esc(r.description)}</span></button>`;
+  }).join("");
+}
+function fmtArgs(a) {
+  const s = JSON.stringify(a);
+  return s === "{}" ? "" : s;
+}
+function renderDetail() {
+  const r = cfg().results.find(x => x.id === state.id);
+  if (!r) { $("detail").innerHTML = `<p class="muted">No scenario matches this filter.</p>`; return; }
+  const scen = DATA.configs[0].results.find(x => x.id === r.id);
+  const [label, cls] = VERDICT[r.verdict];
+  const steps = r.steps.map((s, i) => {
+    const [ol, oc] = OUTCOME[s.outcome];
+    const why = s.reasons.join("; ");
+    const tone = s.outcome === "deny" ? (s.decision === "require_approval" ? "ask" : "block") : "";
+    const asked = s.decision === "require_approval" ? (s.outcome === "allow" ? " · approved by a human" : " · approval not granted") : "";
+    return `<div class="step"><div class="n">${i + 1}</div><div style="display:grid;gap:6px;min-width:0">
+      <div class="who">${esc(s.agent)} for ${esc(s.principal)}${esc(asked)}</div>
+      <div class="call"><b>${esc(s.tool)}</b> ${esc(fmtArgs(s.args))}</div>
+      <div>${pill(ol, oc)}</div>
+      <div class="why ${tone}">${esc(why)}</div></div></div>`;
+  }).join("");
+  const total = scen.steps.length > r.steps.length ? scen.steps.length : null;
+  // Steps after a refusal never ran; show how many the attack had planned.
+  const planned = DATA.configs.map(c => c.results.find(x => x.id === r.id).steps.length);
+  const maxSteps = Math.max(...planned);
+  const notRun = maxSteps - r.steps.length;
+  $("detail").innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
+      <div class="eyebrow">${esc(r.id)} · ${esc(r.technique)}</div>${pill(label, cls)}</div>
+    <h3>${esc(r.description)}</h3>
+    ${r.known_issue ? `<div class="note"><b>Documented gap.</b> ${esc(r.known_issue)}</div>` : ""}
+    <div class="steps">${steps}</div>
+    ${notRun > 0 && r.stopped_at !== null ? `<div class="skipped">${notRun} later step${notRun > 1 ? "s" : ""} never ran.</div>` : ""}
+    ${r.kind === "attack" && r.verdict === "bypass" && r.external_sends.length ? `<div class="escaped"><b>Left the company:</b> ${r.external_sends.map(esc).join("; ")}</div>` : ""}`;
+}
+function renderExplorer() { renderTabs(); renderList(); renderDetail(); }
+
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-cfg],[data-filter],[data-id]");
+  if (!t) return;
+  if (t.dataset.cfg) state.cfg = t.dataset.cfg;
+  if (t.dataset.filter) state.filter = t.dataset.filter;
+  if (t.dataset.id) state.id = t.dataset.id;
+  renderExplorer();
+  if (t.dataset.id) { const sel = document.querySelector(`.row[data-id="${t.dataset.id}"]`); sel && sel.focus(); }
+});
+$("list").addEventListener("keydown", e => {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const rs = visible(), i = rs.findIndex(r => r.id === state.id);
+  const next = rs[Math.max(0, Math.min(rs.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
+  if (next) { state.id = next.id; e.preventDefault(); renderList(); renderDetail(); document.querySelector(`.row[data-id="${next.id}"]`).focus(); }
+});
+
+/* ---------- recorded session + chain ---------- */
+let working = structuredClone(DATA.log);
+let selected = 2;
+function renderSession() {
+  $("session").innerHTML = DATA.narrative.map((n, i) => `<div class="srow">
+    <span class="k">${i + 1}</span><span class="k">${esc(n.agent)}</span><span class="t">${esc(n.tool)}</span>
+    ${pill(n.allowed ? "Allowed" : "Refused", n.allowed ? "p-allow" : (n.reply && n.reply.includes("approval") ? "p-ask" : "p-block"))}
+    ${n.reply ? `<span class="r">${esc(n.reply.replace("[agent-intent-gateway] ", ""))}</span>` : ""}</div>`).join("");
+}
+function renderLog(result) {
+  const bad = result && !result.ok ? result.index : -1;
+  const head = `<thead><tr><th>#</th><th>Agent</th><th>Tool</th><th>Outcome</th><th>Previous hash</th><th>Hash</th></tr></thead>`;
+  const rows = working.map((r, i) => {
+    const cls = ["clickable", i === bad ? "broken" : "", bad >= 0 && i > bad ? "after" : "", i === selected ? "sel" : ""].join(" ");
+    return `<tr class="${cls}" data-rec="${i}" tabindex="0"><td class="num">${i + 1}</td><td>${esc(r.agent)}</td><td class="mono">${esc(r.tool)}</td>
+      <td>${pill(r.outcome === "allow" ? "Allowed" : "Refused", r.outcome === "allow" ? "p-allow" : "p-block")}</td>
+      <td class="hash">${esc(r.prev.slice(0, 12))}…</td><td class="hash">${esc(r.hash.slice(0, 12))}…</td></tr>`;
+  }).join("");
+  $("log").innerHTML = head + `<tbody>${rows}</tbody>`;
+  const rec = working[selected];
+  $("record").textContent = rec ? JSON.stringify(rec, null, 2) : "";
+}
+async function verifyNow() {
+  const st = $("verify-status");
+  st.className = "status wait"; st.textContent = "Verifying…";
+  const res = await AIGChain.verify(working);
+  if (res.ok) { st.className = "status ok"; st.textContent = `Chain intact: ${res.reason}. Nothing was edited, reordered or removed.`; }
+  else { st.className = "status bad"; st.textContent = `Tampering detected at record ${res.index + 1}: ${res.reason}. Records after it can no longer be trusted.`; }
+  renderLog(res);
+}
+$("btn-verify").addEventListener("click", verifyNow);
+$("btn-tamper").addEventListener("click", () => {
+  working = structuredClone(DATA.log);
+  working[2].outcome = "allow"; working[2].reasons = ["email.send is within expense-bot's declared scope"];
+  selected = 2; verifyNow();
+});
+$("btn-delete").addEventListener("click", () => {
+  working = structuredClone(DATA.log).filter((_, i) => i !== 4);
+  selected = 4; verifyNow();
+});
+$("btn-reset").addEventListener("click", () => { working = structuredClone(DATA.log); selected = 2; verifyNow(); });
+$("log").addEventListener("click", e => { const tr = e.target.closest("tr[data-rec]"); if (tr) { selected = +tr.dataset.rec; renderLog(); verifyNow(); } });
+$("log").addEventListener("keydown", e => { if (e.key === "Enter") { const tr = e.target.closest("tr[data-rec]"); if (tr) { selected = +tr.dataset.rec; verifyNow(); } } });
+
+/* ---------- integration ---------- */
+function renderIntegration() {
+  $("intents").innerHTML = Object.values(DATA.intents).map(it => `<div class="card">
+    <div style="display:flex;gap:8px;justify-content:space-between;align-items:start"><h3>${esc(it.title)}</h3>${pill(it.mode === "observe" ? "Observe" : "Enforce", it.mode === "observe" ? "p-observe" : "p-block")}</div>
+    <div class="id">${esc(it.intent_id)} → ${esc(it.artifact_id)}</div>
+    <ul>${it.report.map(l => `<li>${esc(l)}</li>`).join("")}</ul></div>`).join("");
+  const head = `<thead><tr><th>Event</th><th>Intent</th><th>Device</th><th>Approval</th><th>Blocking</th></tr></thead>`;
+  $("events").innerHTML = head + `<tbody>${DATA.events.map((e, i) => `<tr class="clickable" data-ev="${i}" tabindex="0">
+    <td>${pill(e.event_type.replace("match_", ""), e.event_type === "match_blocked" ? "p-block" : "p-observe")}</td>
+    <td class="mono">${esc(e.intent_id)}</td><td class="mono">${esc(e.device_id || "")}</td><td class="mono">${esc(e.approval_ref || "none")}</td>
+    <td>${e.blocking_applied ? "yes" : "no"}</td></tr>`).join("")}</tbody>`;
+  const show = i => { $("event-json").textContent = JSON.stringify(DATA.events[i], null, 2); };
+  $("events").addEventListener("click", e => { const tr = e.target.closest("tr[data-ev]"); if (tr) show(+tr.dataset.ev); });
+  $("events").addEventListener("keydown", e => { if (e.key === "Enter") { const tr = e.target.closest("tr[data-ev]"); if (tr) show(+tr.dataset.ev); } });
+  show(0);
+}
+
+/* ---------- boot ---------- */
+$("provenance").textContent = `Lab results · generated ${DATA.generated} from commit ${DATA.commit}`;
+$("footer").innerHTML = `<div>Source: <a href="https://github.com/dentroio/agent-intent-gateway" target="_blank" rel="noopener">dentroio/agent-intent-gateway</a> · commit <span class="mono">${esc(DATA.commit)}</span></div>
+  <div>Every number on this page comes from <span class="mono">python scripts/build_demo.py</span>, which runs the red team and records the session shown above.</div>`;
+renderScore(); renderMatrix(); renderExplorer(); renderSession(); renderIntegration(); renderLog(); verifyNow();
+</script>
