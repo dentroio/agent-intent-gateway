@@ -120,6 +120,8 @@ Transport: POST of single JSON-RPC messages, JSON responses, `Mcp-Session-Id`, `
 
 ## Clarion intent in, AegisFlux evidence out
 
+AIG is deliberately standalone while Clarion and AegisFlux build out their own integration. It consumes their contracts read-only and changes nothing in either repository. See [ADR-001](docs/ADR-001-standalone-integration-boundary.md) for the boundary and the list of integration proposals.
+
 The gateway is one placement in a larger loop: **Clarion** decides what should happen, **AegisFlux** controls hosts and traffic steering, and AIG enforces at the tool layer. It speaks both products' existing contracts, vendored unchanged in [`contracts/aegisflux/`](contracts/aegisflux) and checked in tests:
 
 ```
