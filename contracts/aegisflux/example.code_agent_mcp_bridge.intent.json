@@ -1,0 +1,66 @@
+{
+  "schema_version": "segmentation_policy_intent.v1",
+  "intent_id": "seg-intent-code-agent-mcp-bridge",
+  "title": "Observe MCP code-agent bridge egress",
+  "description": "Observe-only placement for MCP stdio servers bridging to external model APIs on developer endpoints.",
+  "action_mode": "observe",
+  "blocking_enabled": false,
+  "lifecycle_status": "approved",
+  "subject": {
+    "kind": "agent_class",
+    "agent_class": "code_agent",
+    "process_selectors": [
+      { "command_contains": "modelcontextprotocol" },
+      { "image_name": "node.exe" }
+    ],
+    "labels": { "scenario": "mcp_tool_bridge" }
+  },
+  "evidence_refs": [
+    { "kind": "finding", "ref": "wo-det-002-lab-mcp-bridge", "confidence": "high" },
+    { "kind": "device", "ref": "lab-mcp-01", "confidence": "high" },
+    { "kind": "flow", "ref": "wo-det-002-lab-flow-443", "confidence": "medium" }
+  ],
+  "destination_rules": [
+    { "match": "api.openai.com", "port_range": "443", "protocol": "tcp" },
+    { "match": "ollama.internal.lab.local", "protocol": "any" }
+  ],
+  "data_rules": [
+    { "classification": "model_api", "sensitivity": "confidential" }
+  ],
+  "placement_preferences": ["host", "proxy", "enterprise_gateway"],
+  "platform_adapters": {
+    "windows_wfp": {
+      "supported": true,
+      "compile_ready": false,
+      "max_action_mode": "audit",
+      "notes": "Host observe/audit canary only — blocking requires separate WO-SEG-005W proof."
+    },
+    "linux_ebpf": {
+      "supported": true,
+      "compile_ready": false,
+      "max_action_mode": "audit",
+      "notes": "eBPF adapter boundary — observe-only until WO-SEG-004L canary."
+    },
+    "enterprise_gateway": {
+      "supported": true,
+      "compile_ready": false,
+      "max_action_mode": "observe",
+      "notes": "Trusted Clarion-side publish; endpoint does not assert SGT identity."
+    }
+  },
+  "evidence_constraints": {
+    "endpoint_may_not_assert_trusted_sgt": true,
+    "allowed_evidence_classes": ["process", "flow", "dns", "finding"]
+  },
+  "approval": {
+    "required": false,
+    "status": "not_required",
+    "refs": ["draft:ctrl-mcp-bridge-observe"]
+  },
+  "ttl": {
+    "expires_at_ms": 1893456000000,
+    "review_by_ms": 1767225600000
+  },
+  "rollback_refs": ["draft:ctrl-mcp-bridge-observe:rollback"],
+  "operator_notes": "Clarion placement may prefer proxy or enterprise_gateway; host path is first lab canary."
+}

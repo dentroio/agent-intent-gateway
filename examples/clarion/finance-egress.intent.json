@@ -1,0 +1,62 @@
+{
+  "schema_version": "segmentation_policy_intent.v1",
+  "intent_id": "clarion-finance-egress",
+  "title": "Finance data never leaves the company",
+  "description": "Applies to every agent: finance data may reach other agents through shared stores, so the rule follows the data, not the agent that first read it.",
+  "action_mode": "deny",
+  "blocking_enabled": true,
+  "lifecycle_status": "approved",
+  "subject": {
+    "kind": "agent_class",
+    "agent_class": "*"
+  },
+  "evidence_refs": [
+    {
+      "kind": "finding",
+      "ref": "risk-review-2026-q4-finance",
+      "confidence": "high"
+    }
+  ],
+  "data_rules": [
+    {
+      "classification": "finance",
+      "sensitivity": "confidential"
+    }
+  ],
+  "placement_preferences": [
+    "proxy",
+    "host"
+  ],
+  "platform_adapters": {
+    "proxy_broker": {
+      "supported": true,
+      "compile_ready": true,
+      "max_action_mode": "deny",
+      "notes": "Agent Intent Gateway (MCP tool layer)."
+    }
+  },
+  "evidence_constraints": {
+    "endpoint_may_not_assert_trusted_sgt": true,
+    "allowed_evidence_classes": [
+      "process",
+      "flow",
+      "finding"
+    ]
+  },
+  "ttl": {
+    "expires_at_ms": 1893456000000,
+    "review_by_ms": 1798761600000
+  },
+  "approval": {
+    "required": true,
+    "status": "approved",
+    "actor": "ciso@corp.example",
+    "approved_at_ms": 1793500000000,
+    "refs": [
+      "chg-2026-1101"
+    ]
+  },
+  "rollback_refs": [
+    "draft:clarion-finance-egress:rollback"
+  ]
+}

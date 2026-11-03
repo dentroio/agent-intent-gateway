@@ -114,6 +114,7 @@ class Agent:
     allow: tuple[str, ...] = ()
     require_approval: tuple[str, ...] = ()
     deny: tuple[str, ...] = ()
+    agent_class: str | None = None   # logical class Clarion intents target (code_agent, research_agent, ...)
 
 
 @dataclass(frozen=True)
@@ -139,6 +140,16 @@ class FlowRule:
     action: str
     precision: str = "session"
     residual: str = "require_approval"
+    # mode: observe records what the rule *would* do without doing it (rollout, audit)
+    enforce: bool = True
+    # scope: empty means every agent / device
+    agent_classes: tuple[str, ...] = ()
+    device_ids: tuple[str, ...] = ()
+    expires_at_ms: int | None = None
+    # provenance when the rule was compiled from a Clarion intent
+    intent_id: str | None = None
+    artifact_id: str | None = None
+    approval_ref: str | None = None   # the approval that authorised blocking (AegisFlux requires it)
 
 
 @dataclass(frozen=True)
@@ -180,6 +191,41 @@ def _action(value: Any, where: str) -> str:
     if value not in ACTIONS:
         raise PolicyError(f"{where}: action must be one of {', '.join(ACTIONS)}, got {value!r}")
     return value
+
+
+def parse_flow(spec: dict[str, Any], where: str, default_id: str) -> FlowRule:
+    if not isinstance(spec, dict) or "from" not in spec or "to" not in spec:
+        raise PolicyError(f"{where}: needs from and to")
+    precision = spec.get("precision", "session")
+    if precision not in ("session", "value"):
+        raise PolicyError(f"{where}.precision must be session or value")
+    if "residual" in spec and precision != "value":
+        raise PolicyError(f"{where}: residual only applies with precision: value")
+    action = _action(spec.get("action"), where)
+    residual = _action(spec.get("residual", "require_approval"), f"{where}.residual")
+    if SEVERITY[residual] > SEVERITY[action]:
+        raise PolicyError(f"{where}: residual must not be stricter than action")
+    mode = spec.get("mode", "enforce")
+    if mode not in ("enforce", "observe"):
+        raise PolicyError(f"{where}.mode must be enforce or observe")
+    expires = spec.get("expires_at_ms")
+    if expires is not None and (isinstance(expires, bool) or not isinstance(expires, int) or expires < 1):
+        raise PolicyError(f"{where}.expires_at_ms must be a positive integer")
+    return FlowRule(
+        id=spec.get("id", default_id),
+        from_=spec["from"],
+        to=spec["to"],
+        action=action,
+        precision=precision,
+        residual=residual,
+        enforce=mode == "enforce",
+        agent_classes=_patterns(spec.get("agent_classes"), f"{where}.agent_classes"),
+        device_ids=_patterns(spec.get("device_ids"), f"{where}.device_ids"),
+        expires_at_ms=expires,
+        intent_id=spec.get("intent_id"),
+        artifact_id=spec.get("artifact_id"),
+        approval_ref=spec.get("approval_ref"),
+    )
 
 
 def parse_policy(doc: dict[str, Any]) -> Policy:
@@ -238,30 +284,10 @@ def parse_policy(doc: dict[str, Any]) -> Policy:
             allow=_patterns(spec.get("allow"), f"agents.{aid}.allow"),
             require_approval=_patterns(spec.get("require_approval"), f"agents.{aid}.require_approval"),
             deny=_patterns(spec.get("deny"), f"agents.{aid}.deny"),
+            agent_class=spec.get("agent_class"),
         )
 
-    flows = []
-    for i, spec in enumerate(doc.get("flows") or []):
-        where = f"flows[{i}]"
-        precision = spec.get("precision", "session")
-        if precision not in ("session", "value"):
-            raise PolicyError(f"{where}.precision must be session or value")
-        if "residual" in spec and precision != "value":
-            raise PolicyError(f"{where}: residual only applies with precision: value")
-        action = _action(spec.get("action"), where)
-        residual = _action(spec.get("residual", "require_approval"), f"{where}.residual")
-        if SEVERITY[residual] > SEVERITY[action]:
-            raise PolicyError(f"{where}: residual must not be stricter than action")
-        flows.append(
-            FlowRule(
-                id=spec.get("id", f"flow-{i}"),
-                from_=spec["from"],
-                to=spec["to"],
-                action=action,
-                precision=precision,
-                residual=residual,
-            )
-        )
+    flows = [parse_flow(spec, f"flows[{i}]", f"flow-{i}") for i, spec in enumerate(doc.get("flows") or [])]
 
     classes: dict[str, ClassRule] | None = None
     if "classes" in doc:

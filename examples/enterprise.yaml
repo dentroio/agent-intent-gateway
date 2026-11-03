@@ -31,18 +31,21 @@ tools:
 
 agents:
   - id: expense-bot
+    agent_class: finance_automation
     purpose: Reconcile employee expense reports against the ledger
     on_behalf_of: ["group:finance", "user:*@corp.example"]
     allow: [finance.query_ledger, docs.search, docs.write, email.send, email.read_inbox]
     require_approval: [finance.approve_payment]
 
   - id: research-assistant
+    agent_class: research_agent
     purpose: Answer questions using internal docs and the public web
     on_behalf_of: ["user:*@corp.example"]
     allow: [docs.search, web.fetch, email.send]
     deny: [finance.*, hr.*, ot.*]
 
   - id: plant-monitor
+    agent_class: ot_automation
     purpose: Watch OT sensors and report anomalies to operators
     on_behalf_of: ["group:ot-operators"]
     allow: [ot.read_sensor, email.send]

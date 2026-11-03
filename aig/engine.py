@@ -13,13 +13,14 @@ The most restrictive outcome wins.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Any
 
 from .labels import LabelStore
 from .values import Evidence, ValueIndex
-from .policy import SEVERITY, Policy
+from .policy import SEVERITY, Agent, FlowRule, Policy
 
 
 @dataclass
@@ -38,15 +39,46 @@ class Session:
 
 
 @dataclass(frozen=True)
+class Match:
+    """A flow rule that fired, whether or not it changed the decision.
+
+    `reason` is redacted (no data values): it may leave the gateway as telemetry."""
+
+    rule_id: str
+    action: str                 # what the rule did, or would have done in observe mode
+    enforced: bool
+    reason: str
+    intent_id: str | None = None
+    artifact_id: str | None = None
+    approval_ref: str | None = None
+
+
+@dataclass(frozen=True)
 class Decision:
     action: str                 # allow | require_approval | deny
     reasons: tuple[str, ...]
     rules: tuple[str, ...]      # ids of the rules that produced the outcome
     sink: str | None = None
+    matches: tuple[Match, ...] = ()
 
     @property
     def allowed(self) -> bool:
         return self.action == "allow"
+
+    @property
+    def observed(self) -> tuple[Match, ...]:
+        """Observe-mode rules that would have tightened this decision."""
+        return tuple(m for m in self.matches if not m.enforced)
+
+
+def _in_scope(flow: FlowRule, agent: Agent, session: "Session", now_ms: int) -> bool:
+    if flow.expires_at_ms is not None and now_ms > flow.expires_at_ms:
+        return False
+    if flow.agent_classes and not any(fnmatchcase(agent.agent_class or "", p) for p in flow.agent_classes):
+        return False
+    if flow.device_ids and session.attrs.get("device") not in flow.device_ids:
+        return False
+    return True
 
 
 def _matches(name: str, patterns: tuple[str, ...]) -> str | None:
@@ -65,7 +97,8 @@ class Engine:
         self.policy = policy
         self.labels = labels if labels is not None else LabelStore()
 
-    def evaluate(self, session: Session, tool_name: str, args: dict[str, Any] | None = None) -> Decision:
+    def evaluate(self, session: Session, tool_name: str, args: dict[str, Any] | None = None,
+                 now: float | None = None) -> Decision:
         args = args or {}
         policy = self.policy
 
@@ -124,11 +157,15 @@ class Engine:
         sink = tool.sink_for(args)
         targets = {sink, f"risk:{tool.risk}", *(f"writes:{w}" for w in tool.writes)}
         present: dict[str, Evidence] | None = None   # computed once, only if a value rule needs it
+        matches: list[Match] = []
+        now_ms = int((now if now is not None else time.time()) * 1000)
         for flow in policy.flows:
             if flow.from_ not in session.labels:
                 continue
             if flow.action == "allow" or not any(fnmatchcase(t, flow.to) for t in targets):
                 continue  # flow rules only ever tighten a decision
+            if not _in_scope(flow, agent, session, now_ms):
+                continue
             origin = session.provenance.get(flow.from_, "an earlier call")
             verb = flow.action.replace("_", " ")
             if flow.precision == "value":
@@ -136,27 +173,35 @@ class Engine:
                     present = session.values.find(args)
                 if flow.from_ in present:
                     effective = flow.action
-                    reason = f"{present[flow.from_].describe()}; flow to {flow.to!r} is {verb}"
+                    ev = present[flow.from_]
+                    reason = f"{ev.describe()}; flow to {flow.to!r} is {verb}"
+                    redacted = f"{ev.describe(redact=True)}; flow to {flow.to!r} is {verb}"
                     rule = f"flow:{flow.id}"
                 else:
                     effective = flow.residual
-                    reason = (f"session holds {flow.from_!r} data (from {origin}) but no {flow.from_!r} "
-                              f"values were found in the arguments; residual action is "
-                              f"{effective.replace('_', ' ')}")
+                    reason = redacted = (f"session holds {flow.from_!r} data (from {origin}) but no "
+                                         f"{flow.from_!r} values were found in the arguments; residual "
+                                         f"action is {effective.replace('_', ' ')}")
                     rule = f"flow:{flow.id}:residual"
                 if effective == "allow":
                     continue
             else:
                 effective = flow.action
-                reason = f"session holds {flow.from_!r} data (from {origin}); flow to {flow.to!r} is {verb}"
+                reason = redacted = (f"session holds {flow.from_!r} data (from {origin}); "
+                                     f"flow to {flow.to!r} is {verb}")
                 rule = f"flow:{flow.id}"
+
+            matches.append(Match(flow.id, effective, flow.enforce, redacted, flow.intent_id, flow.artifact_id,
+                                 flow.approval_ref))
+            if not flow.enforce:
+                continue  # observe mode: recorded above, decision unchanged
             if SEVERITY[effective] > SEVERITY[action]:
                 action, reasons, rules = effective, [reason], [rule]
             elif SEVERITY[effective] == SEVERITY[action] and action != "allow":
                 reasons.append(reason)
                 rules.append(rule)
 
-        return Decision(action, tuple(reasons), tuple(rules), sink=sink)
+        return Decision(action, tuple(reasons), tuple(rules), sink=sink, matches=tuple(matches))
 
     def observe(self, session: Session, tool_name: str, args: dict[str, Any] | None, result_text: str) -> None:
         """Index the values in a tool result under the labels it carries."""

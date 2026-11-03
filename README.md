@@ -118,6 +118,46 @@ aig token issue --key issuer.key --agent expense-bot --principal group:finance \
 
 Transport: POST of single JSON-RPC messages, JSON responses, `Mcp-Session-Id`, `202` for notifications, `DELETE` to end a session, `405` for the optional GET stream, and Origin checks against DNS rebinding. The stdio proxy stays for local MCP servers, whose traffic never touches the network.
 
+## Clarion intent in, AegisFlux evidence out
+
+The gateway is one placement in a larger loop: **Clarion** decides what should happen, **AegisFlux** controls hosts and traffic steering, and AIG enforces at the tool layer. It speaks both products' existing contracts, vendored unchanged in [`contracts/aegisflux/`](contracts/aegisflux) and checked in tests:
+
+```
+Clarion intent ──► aig compile ──► signed compiled artifact ──► aig serve --overlay ──► decisions
+(segmentation_policy_intent.v1)    (platform_path: proxy_broker)                          │
+                                                                                          ▼
+                                  AegisFlux evidence ◄── segmentation_outcome_event.v1 (match_blocked / match_observed)
+```
+
+```bash
+aig compile --intent examples/clarion/finance-egress.intent.json --policy examples/clarion/gateway-base.yaml \
+    --key compiler.key --key-id clarion-lab-1 --out finance.bundle.json
+aig serve ... --overlay finance.bundle.json --overlay-key compiler.pub --emit-events events.jsonl   # or --emit-url
+```
+
+**What an intent means at the tool layer:**
+
+| Intent field | Compiled to |
+|---|---|
+| `data_rules` classification / sensitivity | data label, and a flow rule to `external`: `restricted` → deny (session), `confidential` → deny (value, residual approval), `internal` → approval (value, residual allow), `public` → none |
+| `subject.agent_class` / `device_ids` | rule scope: the agent's class in gateway policy, the device in its token |
+| `action_mode`, `blocking_enabled`, `proxy_broker.max_action_mode` | `enforce`, or `observe` (record "would block" without blocking) |
+| `lifecycle_status`, `approval`, `ttl` | refused unless approved and live; rules expire with the intent |
+| `destination_rules`, `process_selectors` | reported as handed to the steering gateway and host; never silently ignored |
+
+**Guarantees:**
+- Overlays are Ed25519-signed and hash-checked, and their provenance (intent, artifact, approval) comes from the signed artifact. Tampered, expired, duplicate or wrongly signed overlays are refused at load.
+- Intent only adds rules; it can never loosen the base policy or switch off the local integrity rules.
+- Outcome events carry **no data values**, only a redacted reason. The full reason stays in the local tamper-evident log, which each event references by hash.
+- Every `match_blocked` cites the approved change that authorised blocking, as AegisFlux requires.
+- Event delivery is best-effort and off the decision path, so a dead collector never changes or delays a decision.
+- AegisFlux's own example intent (`code_agent_mcp_bridge`) compiles, downgraded to observe, with explicit warnings for the parts the gateway can't act on.
+
+**Two findings from building it:**
+
+1. **Scope data rules to the data, not the agent.** A finance rule scoped to `agent_class: finance_automation` lets the cross-agent laundering attack through, because the research agent isn't in scope. The compiler warns when shared stores exist, and a test proves the bypass.
+2. **Sensitivity sets the trade-off.** On the Clarion-managed gateway ([`examples/clarion/`](examples/clarion)), the base policy alone blocks 8 of 24 attacks. With the three intents it blocks **24 of 24**, including the paraphrase attack, because `confidential` means "ask a human when the agent has seen the data but sends none of it". The price is that two legitimate vendor replies need approval (9 of 11 workloads run without a human). The hand-tuned `examples/enterprise.yaml` makes the opposite choice: 23 of 24 attacks blocked, 11 of 11 workloads.
+
 ## Red team
 
 [`scenarios/`](scenarios) holds an attack library (exfiltration chains, recipient smuggling, argument smuggling, indirect prompt injection, confused deputy, spoofed agents, cross-agent laundering) and legitimate workloads that measure false positives. The harness drives every scenario through the real gateway path in front of a stateful [simulated enterprise](aig/sim/enterprise.py), with a poisoned inbox email and a ledger worth stealing, and checks what actually left the building.
@@ -150,7 +190,8 @@ Every scenario runs in CI (`tests/test_redteam.py`), so a fixed bypass can never
 - [x] Simulated enterprise, attack library, legitimate workloads
 - [x] Red-team harness: scoreboard, bypass → fix → regression test
 - [x] MCP Streamable HTTP mode with AegisFlux per-stream token identity, classes, session binding
-- [ ] Emit decisions as AegisFlux evidence events; compile Clarion `segmentation_policy_intent.v1` to gateway policy
+- [x] Compile Clarion `segmentation_policy_intent.v1` to signed `proxy_broker` overlays; emit AegisFlux outcome events
+- [ ] Demo page: scoreboard, attack chains with provenance, decision log verification
 - [x] Value-level tracking outside the agent: decoding, normalisation, residual actions
 - [ ] Semantic matching for paraphrase (probabilistic; would sit behind `residual`, never replace deterministic matches)
 - [ ] LLM-driven adversaries that generate new attack chains against the policy

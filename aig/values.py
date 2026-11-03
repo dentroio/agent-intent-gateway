@@ -185,9 +185,13 @@ class Evidence:
     words: set[str] = field(default_factory=set)
     overflow: bool = False
 
-    def describe(self) -> str:
+    def describe(self, redact: bool = False) -> str:
+        """Human-readable evidence. redact=True leaves the data values out (for telemetry)."""
         if self.overflow:
             return f"{self.label!r} value index is full, so every call is treated as carrying it"
+        if redact:
+            return (f"argument {', '.join(sorted(self.args))} carries {self.label!r} values "
+                    f"({len(self.strong)} identifiers/amounts, {len(self.words)} words) from {self.origin}")
         shown = sorted(self.strong)[:3] + sorted(self.words)[: max(0, 3 - len(self.strong))]
         more = len(self.strong) + len(self.words) - len(shown)
         vals = ", ".join(repr(v) for v in shown) + (f" +{more} more" if more > 0 else "")

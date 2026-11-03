@@ -1,0 +1,57 @@
+{
+  "schema_version": "segmentation_policy_intent.v1",
+  "intent_id": "clarion-ot-egress",
+  "title": "OT telemetry stays on site (rollout: observe before enforcing)",
+  "description": "Observe-only rollout: the gateway records what it would block so operators can review the impact before a deny intent is approved.",
+  "action_mode": "observe",
+  "blocking_enabled": false,
+  "lifecycle_status": "approved",
+  "subject": {
+    "kind": "agent_class",
+    "agent_class": "ot_automation"
+  },
+  "evidence_refs": [
+    {
+      "kind": "finding",
+      "ref": "ot-segmentation-audit",
+      "confidence": "high"
+    }
+  ],
+  "data_rules": [
+    {
+      "classification": "ot",
+      "sensitivity": "restricted"
+    }
+  ],
+  "placement_preferences": [
+    "proxy",
+    "host"
+  ],
+  "platform_adapters": {
+    "proxy_broker": {
+      "supported": true,
+      "compile_ready": true,
+      "max_action_mode": "deny",
+      "notes": "Agent Intent Gateway (MCP tool layer)."
+    }
+  },
+  "evidence_constraints": {
+    "endpoint_may_not_assert_trusted_sgt": true,
+    "allowed_evidence_classes": [
+      "process",
+      "flow",
+      "finding"
+    ]
+  },
+  "ttl": {
+    "expires_at_ms": 1893456000000,
+    "review_by_ms": 1798761600000
+  },
+  "approval": {
+    "required": false,
+    "status": "not_required"
+  },
+  "rollback_refs": [
+    "draft:clarion-ot-egress:rollback"
+  ]
+}

@@ -5,7 +5,11 @@
     aig token  keygen --out NAME | issue --key PRIV.pem --agent ... --principal ... --class ...
     aig check  --policy P --agent ID --principal WHO TOOL [--args JSON] [--labels a,b]
     aig redteam --policy P [--scenarios DIR] [--md FILE] [--json FILE]
+    aig compile --intent INTENT.json --policy P --key COMPILER.key --key-id ID [--out BUNDLE.json]
     aig verify-log FILE
+
+proxy, serve, check and redteam accept --overlay BUNDLE.json (repeatable) with
+--overlay-key COMPILER.pub; proxy and serve accept --emit-events FILE / --emit-url URL.
 """
 from __future__ import annotations
 
@@ -30,12 +34,22 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--agent", required=True)
         sp.add_argument("--principal", required=True)
 
+    def overlays(sp):
+        sp.add_argument("--overlay", action="append", default=[], help="signed bundle from aig compile (repeatable)")
+        sp.add_argument("--overlay-key", help="Ed25519 public key (PEM) that signed the overlays")
+
+    def emit(sp):
+        sp.add_argument("--emit-events", help="append AegisFlux segmentation_outcome_event.v1 records to this file")
+        sp.add_argument("--emit-url", help="POST outcome events to this collector URL (best-effort)")
+
     px = sub.add_parser("proxy", help="run as an MCP stdio proxy in front of an upstream server")
     ident(px)
     px.add_argument("--log", default="aig-decisions.jsonl")
     px.add_argument("--show-all-tools", action="store_true", help="don't hide out-of-scope tools from tools/list")
     px.add_argument("--label-store", default="aig-labels.json",
                     help="file shared by all gateway processes so labels follow data across agents")
+    overlays(px)
+    emit(px)
     px.add_argument("upstream", nargs=argparse.REMAINDER)
 
     sv = sub.add_parser("serve", help="run as an MCP Streamable HTTP gateway; identity from per-stream tokens")
@@ -49,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--label-store", default="aig-labels.json")
     sv.add_argument("--revoked", help="file with one revoked token id, instance id or device id per line")
     sv.add_argument("--allow-origin", action="append", default=[], help="browser Origin to accept (repeatable)")
+    overlays(sv)
+    emit(sv)
 
     tk = sub.add_parser("token", help="lab token tools (mock AegisFlux issuer)")
     tsub = tk.add_subparsers(dest="tcmd", required=True)
@@ -70,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     ck.add_argument("tool")
     ck.add_argument("--args", default="{}")
     ck.add_argument("--labels", default="", help="comma-separated labels the session already holds")
+    overlays(ck)
 
     vf = sub.add_parser("verify-log", help="verify a decision log's hash chain")
     vf.add_argument("file")
@@ -79,6 +96,15 @@ def main(argv: list[str] | None = None) -> int:
     rt.add_argument("--scenarios", default="scenarios")
     rt.add_argument("--json", help="write full results as JSON")
     rt.add_argument("--md", help="write the scoreboard as Markdown")
+    overlays(rt)
+
+    cp = sub.add_parser("compile", help="compile a Clarion intent into a signed gateway overlay")
+    cp.add_argument("--intent", required=True, help="segmentation_policy_intent.v1 JSON")
+    cp.add_argument("--policy", required=True, help="the gateway policy the overlay will apply to")
+    cp.add_argument("--key", required=True, help="Ed25519 private key (PEM) that signs the artifact")
+    cp.add_argument("--key-id", required=True)
+    cp.add_argument("--previous-artifact-id", default="")
+    cp.add_argument("--out", help="write the signed bundle here")
 
     a = p.parse_args(argv)
 
@@ -101,9 +127,46 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         policy = load_policy(a.policy)
-    except (OSError, PolicyError) as e:
+        if getattr(a, "overlay", None):
+            from .clarion import apply_overlays
+            from .token import load_public
+
+            if not a.overlay_key:
+                raise PolicyError("--overlay needs --overlay-key to verify the signature")
+            bundles = [json.loads(Path(f).read_text()) for f in a.overlay]
+            policy = apply_overlays(policy, bundles, load_public(a.overlay_key))
+            print(f"loaded {len(bundles)} overlay(s); {len(policy.flows)} flow rules in force", file=sys.stderr)
+    except (OSError, ValueError, PolicyError) as e:
         print(f"policy error: {e}", file=sys.stderr)
         return 2
+
+    if a.cmd == "compile":
+        from .clarion import CompileError, compile_intent
+        from .token import load_private
+
+        try:
+            res = compile_intent(json.loads(Path(a.intent).read_text()), policy, key=load_private(a.key),
+                                 key_id=a.key_id, previous_artifact_id=a.previous_artifact_id)
+        except (CompileError, ValueError) as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 2
+        for line in res.report:
+            print(f"  {line}")
+        if not res.placed:
+            return 3
+        art = res.bundle["artifact"]
+        print(f"compiled {art['artifact_id']} ({art['action_mode']}, {len(res.bundle['payload']['flows'])} rule(s))")
+        if a.out:
+            Path(a.out).write_text(json.dumps(res.bundle, indent=2) + "\n", encoding="utf-8")
+            print(f"wrote {a.out}")
+        return 0
+
+    emitter = None
+    if getattr(a, "emit_events", None) or getattr(a, "emit_url", None):
+        from .aegis import OutcomeEmitter
+
+        emitter = OutcomeEmitter(a.emit_events, a.emit_url,
+                                 actor_id=f"aig:{getattr(a, 'audience', None) or 'stdio'}")
 
     if a.cmd == "redteam":
         from .redteam import load_scenarios, run_all, scoreboard, to_json, to_markdown
@@ -127,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         upstream = SimUpstream() if a.upstream == "sim" else HttpUpstream(a.upstream)
         srv = GatewayServer(Engine(policy, LabelStore(a.label_store)), load_public(a.key), a.audience, upstream,
                             ledger=Ledger(a.log), revoked=revoked, allowed_origins=set(a.allow_origin),
-                            host=a.host, port=a.port)
+                            host=a.host, port=a.port, on_decision=emitter)
         print(f"agent-intent-gateway listening on {srv.url} (audience {a.audience}, "
               f"policy {policy.policy_version or 'unversioned'})", file=sys.stderr)
         try:
@@ -144,14 +207,17 @@ def main(argv: list[str] | None = None) -> int:
             session.labels.add(label)
             session.provenance[label] = "--labels"
         d = engine.evaluate(session, a.tool, json.loads(a.args))
-        print(json.dumps({"action": d.action, "sink": d.sink, "reasons": d.reasons, "rules": d.rules}, indent=2))
+        out = {"action": d.action, "sink": d.sink, "reasons": d.reasons, "rules": d.rules}
+        if d.observed:
+            out["observed"] = [{"rule": m.rule_id, "would": m.action, "reason": m.reason} for m in d.observed]
+        print(json.dumps(out, indent=2))
         return 0 if d.allowed else 1
 
     upstream = a.upstream[1:] if a.upstream[:1] == ["--"] else a.upstream
     if not upstream:
         print("proxy needs an upstream command after --", file=sys.stderr)
         return 2
-    gw = Gateway(engine, session, Ledger(a.log), hide_out_of_scope=not a.show_all_tools)
+    gw = Gateway(engine, session, Ledger(a.log), hide_out_of_scope=not a.show_all_tools, on_decision=emitter)
     return run_stdio(gw, upstream)
 
 

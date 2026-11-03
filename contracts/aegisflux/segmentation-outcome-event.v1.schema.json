@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegisflux.local/schemas/segmentation/segmentation-outcome-event.v1.schema.json",
+  "title": "Segmentation Outcome Event",
+  "description": "Observed outcome from intent compilation, staging, or evaluation. Links back to intent, compiled artifact, evidence, and actor/approval.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "timestamp_ms",
+    "intent_id",
+    "artifact_id",
+    "outcome",
+    "action_mode",
+    "blocking_applied",
+    "evidence_refs",
+    "actor"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "segmentation_outcome_event.v1"
+    },
+    "event_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "intent_compiled",
+        "artifact_staged",
+        "artifact_accepted",
+        "artifact_rejected",
+        "match_observed",
+        "match_blocked",
+        "rollback_started",
+        "rollback_completed",
+        "expired"
+      ]
+    },
+    "timestamp_ms": { "type": "integer", "minimum": 0 },
+    "intent_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "artifact_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "device_id": { "type": "string", "maxLength": 128 },
+    "outcome": {
+      "type": "string",
+      "enum": ["success", "partial", "failed", "pending", "rolled_back"]
+    },
+    "action_mode": {
+      "type": "string",
+      "enum": [
+        "observe",
+        "audit",
+        "allow",
+        "deny",
+        "redirect_to_proxy",
+        "assign_tunnel",
+        "quarantine",
+        "rollback"
+      ]
+    },
+    "blocking_applied": {
+      "type": "boolean",
+      "description": "Must be false when action_mode is observe or audit."
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "ref"],
+        "properties": {
+          "kind": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "ref": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      }
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["operator", "system", "agent", "compiler"] },
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "approval_ref": { "type": "string", "maxLength": 256 },
+    "detail": { "type": "string", "maxLength": 4096 },
+    "platform_path": {
+      "type": "string",
+      "enum": [
+        "windows_wfp",
+        "linux_ebpf",
+        "proxy_broker",
+        "enterprise_gateway",
+        "sse_sase",
+        "firewall",
+        "trustsec",
+        "cloud",
+        "workload"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "action_mode": { "enum": ["observe", "audit"] } },
+        "required": ["action_mode"]
+      },
+      "then": {
+        "properties": { "blocking_applied": { "const": false } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "event_type": { "const": "match_blocked" } },
+        "required": ["event_type"]
+      },
+      "then": {
+        "required": ["approval_ref"],
+        "properties": {
+          "blocking_applied": { "const": true },
+          "action_mode": {
+            "enum": ["deny", "quarantine", "redirect_to_proxy", "assign_tunnel"]
+          }
+        }
+      }
+    }
+  ]
+}

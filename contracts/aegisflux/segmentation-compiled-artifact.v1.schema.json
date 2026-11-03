@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegisflux.local/schemas/segmentation/segmentation-compiled-artifact.v1.schema.json",
+  "title": "Segmentation Compiled Artifact",
+  "description": "Platform-specific compiled artifact derived from a shared segmentation policy intent. Distinct from intent — includes signature, scope, expiry, compatibility, and rollback metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_id",
+    "intent_id",
+    "platform_path",
+    "action_mode",
+    "blocking_enabled",
+    "scope",
+    "signature",
+    "compatibility",
+    "expires_at_ms",
+    "rollback"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "segmentation_compiled_artifact.v1"
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+    },
+    "intent_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "platform_path": {
+      "type": "string",
+      "enum": [
+        "windows_wfp",
+        "linux_ebpf",
+        "proxy_broker",
+        "enterprise_gateway",
+        "sse_sase",
+        "firewall",
+        "trustsec",
+        "cloud",
+        "workload"
+      ]
+    },
+    "placement_target": {
+      "type": "string",
+      "enum": [
+        "host",
+        "proxy",
+        "tunnel",
+        "enterprise_gateway",
+        "sse_sase",
+        "firewall",
+        "trustsec",
+        "cloud",
+        "workload"
+      ]
+    },
+    "action_mode": {
+      "type": "string",
+      "enum": [
+        "observe",
+        "audit",
+        "allow",
+        "deny",
+        "redirect_to_proxy",
+        "assign_tunnel",
+        "quarantine",
+        "rollback"
+      ]
+    },
+    "blocking_enabled": { "type": "boolean" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectors"],
+      "properties": {
+        "selectors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+        },
+        "device_ids": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "type": "string", "maxLength": 128 }
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "value_b64"],
+      "properties": {
+        "algorithm": { "type": "string", "enum": ["ed25519", "rsa-pss-sha256"] },
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "value_b64": { "type": "string", "minLength": 16, "maxLength": 8192 },
+        "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min_agent_version", "supported_os"],
+      "properties": {
+        "min_agent_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "supported_os": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["windows", "linux", "macos"] }
+        },
+        "adapter_version": { "type": "string", "maxLength": 64 },
+        "feature_flags": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 128 }
+        }
+      }
+    },
+    "expires_at_ms": { "type": "integer", "minimum": 1 },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan", "previous_artifact_id"],
+      "properties": {
+        "plan": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "previous_artifact_id": { "type": "string", "maxLength": 128 },
+        "drill_required": { "type": "boolean" }
+      }
+    },
+    "payload_ref": {
+      "type": "string",
+      "maxLength": 512,
+      "description": "Opaque platform payload location (bundle id, WFP filter set id, eBPF program bundle)."
+    },
+    "compiled_at_ms": { "type": "integer", "minimum": 0 },
+    "compiler_version": { "type": "string", "maxLength": 64 }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "action_mode": { "enum": ["observe", "audit"] } },
+        "required": ["action_mode"]
+      },
+      "then": {
+        "properties": { "blocking_enabled": { "const": false } }
+      }
+    }
+  ]
+}

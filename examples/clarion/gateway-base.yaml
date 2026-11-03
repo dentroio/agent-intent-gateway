@@ -1,0 +1,61 @@
+# Gateway base policy for a Clarion-managed deployment: tools, agents and
+# baseline rules are local facts; data-flow intent arrives as signed overlays.
+version: 1
+policy_version: "2026.11.1"   # tokens minted for another version are refused
+default: deny
+
+# Backend-assigned policy classes (AegisFlux WO-SEG-011). They arrive in the
+# per-stream token and can only tighten decisions. Unknown classes are refused.
+classes:
+  development: {}
+  research: { require_approval: ["finance.approve_payment", "ot.set_point"] }
+  privileged: {}
+  quarantine: { deny: ["*"] }
+
+tools:
+  finance.query_ledger:    { reads: [finance], args: [status] }
+  finance.approve_payment: { writes: [finance], risk: high, args: [id] }
+  hr.lookup_employee:      { reads: [pii], args: [id] }
+  # Shared store: labels follow data written here to whoever reads it later.
+  docs.search:             { reads: [internal], loads: docs, args: [q] }
+  docs.write:              { writes: [internal], stores: docs, store_key: path, args: [path, content] }
+  web.fetch:               { reads: [untrusted], sink: external, args: [url] }   # the URL itself leaves the building
+  email.read_inbox:        { reads: [untrusted], args: [] }                      # inbound mail is attacker-controllable
+  email.send:
+    sink: external
+    args: [to, cc, bcc, subject, body]
+    egress_rules:
+      # Internal only if every recipient in every field is one well-formed corp address.
+      - { args: [to, cc, bcc], kind: email, pattern: "*@corp.example", sink: internal }
+  ot.read_sensor:          { reads: [ot], args: [sensor] }
+  ot.set_point:            { writes: [ot], risk: high, args: [line, value] }
+
+agents:
+  - id: expense-bot
+    agent_class: finance_automation
+    purpose: Reconcile employee expense reports against the ledger
+    on_behalf_of: ["group:finance", "user:*@corp.example"]
+    allow: [finance.query_ledger, docs.search, docs.write, email.send, email.read_inbox]
+    require_approval: [finance.approve_payment]
+
+  - id: research-assistant
+    agent_class: research_agent
+    purpose: Answer questions using internal docs and the public web
+    on_behalf_of: ["user:*@corp.example"]
+    allow: [docs.search, web.fetch, email.send]
+    deny: [finance.*, hr.*, ot.*]
+
+  - id: plant-monitor
+    agent_class: ot_automation
+    purpose: Watch OT sensors and report anomalies to operators
+    on_behalf_of: ["group:ot-operators"]
+    allow: [ot.read_sensor, email.send]
+    require_approval: [ot.set_point]
+
+flows:
+  # Local baseline. Confidentiality rules for finance, internal docs and OT
+  # come from Clarion intents (examples/clarion/*.intent.json), compiled with
+  # `aig compile` and loaded with --overlay.
+  - { id: no-pii-egress, from: pii, to: external, action: deny }
+  # Integrity stays session-level and local: no intent can switch it off.
+  - { id: untrusted-no-high-risk, from: untrusted, to: "risk:high", action: deny }

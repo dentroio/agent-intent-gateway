@@ -26,6 +26,9 @@ from .ledger import Ledger
 Approver = Callable[[Session, str, dict, Decision], bool]
 
 
+DecisionHook = Callable[[Session, str, Decision, str, "dict | None"], Any]
+
+
 def deny_all(_s: Session, _t: str, _a: dict, _d: Decision) -> bool:
     return False
 
@@ -38,12 +41,14 @@ class Gateway:
         ledger: Ledger | None = None,
         approver: Approver = deny_all,
         hide_out_of_scope: bool = True,
+        on_decision: DecisionHook | None = None,
     ):
         self.engine = engine
         self.session = session
         self.ledger = ledger
         self.approver = approver
         self.hide_out_of_scope = hide_out_of_scope
+        self.on_decision = on_decision
         self._pending_lists: set[Any] = set()
         # request id -> forwarded tool calls awaiting results (a list: ids may be reused)
         self._pending_calls: dict[Any, list[tuple[str, dict]]] = {}
@@ -74,7 +79,12 @@ class Gateway:
                 self.engine.record(self.session, tool, args)
                 if "id" in msg:
                     self._pending_calls.setdefault(_key(msg["id"]), []).append((tool, args))
-            self._log(tool, args, decision, final)
+            record = self._log(tool, args, decision, final)
+        if self.on_decision is not None:
+            try:
+                self.on_decision(self.session, tool, decision, final, record)
+            except Exception:
+                pass  # telemetry never changes or delays an enforcement decision
 
         if final == "allow":
             return msg, None
@@ -114,10 +124,10 @@ class Gateway:
         text = f"[agent-intent-gateway] {tool} {verb}: " + "; ".join(d.reasons)
         return {"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": text}], "isError": True}}
 
-    def _log(self, tool: str, args: dict, d: Decision, final: str) -> None:
+    def _log(self, tool: str, args: dict, d: Decision, final: str) -> dict | None:
         if self.ledger is None:
-            return
-        self.ledger.append({
+            return None
+        return self.ledger.append({
             "agent": self.session.agent_id,
             "principal": self.session.principal,
             **({"class": self.session.klass} if self.session.klass else {}),
@@ -130,6 +140,10 @@ class Gateway:
             "rules": list(d.rules),
             "sink": d.sink,
             "session_labels": sorted(self.session.labels),
+            **({"observed": [{"rule": m.rule_id, "would": m.action, "reason": m.reason}
+                             for m in d.observed]} if d.observed else {}),
+            **({"intents": sorted({m.intent_id for m in d.matches if m.intent_id})}
+               if any(m.intent_id for m in d.matches) else {}),
         })
 
 

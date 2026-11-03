@@ -101,9 +101,11 @@ class McpSession:
 class GatewayServer:
     def __init__(self, engine: Engine, key: Ed25519PublicKey, audience: str, upstream: Upstream,
                  ledger: Ledger | None = None, revoked: set[str] | None = None,
-                 allowed_origins: set[str] | None = None, host: str = "127.0.0.1", port: int = 8443):
+                 allowed_origins: set[str] | None = None, host: str = "127.0.0.1", port: int = 8443,
+                 on_decision=None):
         self.engine, self.key, self.audience, self.upstream = engine, key, audience, upstream
         self.ledger = ledger
+        self.on_decision = on_decision
         self.revoked = revoked or set()
         self.allowed_origins = allowed_origins or set()
         self.sessions: dict[str, McpSession] = {}
@@ -204,7 +206,7 @@ class GatewayServer:
     def _new_session(self, ident: Identity) -> tuple[str, McpSession]:
         session = Session(ident.agent, ident.principal, klass=ident.klass,
                           attrs={"instance": ident.instance, "device": ident.device, "token": ident.jti})
-        sess = McpSession(Gateway(self.engine, session, self.ledger), ident.binding(), self.upstream.open(),
+        sess = McpSession(Gateway(self.engine, session, self.ledger, on_decision=self.on_decision), ident.binding(), self.upstream.open(),
                           {ident.jti})
         sid = uuid.uuid4().hex
         with self.lock:
