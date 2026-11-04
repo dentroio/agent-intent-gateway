@@ -42,8 +42,12 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--emit-events", help="append AegisFlux segmentation_outcome_event.v1 records to this file")
         sp.add_argument("--emit-url", help="POST outcome events to this collector URL (best-effort)")
 
-    px = sub.add_parser("proxy", help="run as an MCP stdio proxy in front of an upstream server")
-    ident(px)
+    px = sub.add_parser("proxy", help="run as an MCP stdio proxy in front of one upstream server, or all of an "
+                                      "agent's servers with --config")
+    px.add_argument("--config", help="aig_agent_config.v1 file: one gateway in front of all of an agent's MCP servers")
+    px.add_argument("--policy")
+    px.add_argument("--agent")
+    px.add_argument("--principal")
     px.add_argument("--log", default="aig-decisions.jsonl")
     px.add_argument("--show-all-tools", action="store_true", help="don't hide out-of-scope tools from tools/list")
     px.add_argument("--label-store", default="aig-labels.json",
@@ -116,6 +120,33 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--out", help="write the signed bundle here")
 
     a = p.parse_args(argv)
+
+    agent_cfg = None
+    if a.cmd == "proxy":
+        if a.config:
+            from .aggregate import load_agent_config
+
+            try:
+                agent_cfg = load_agent_config(a.config)
+            except (OSError, ValueError) as e:
+                print(f"config error: {e}", file=sys.stderr)
+                return 2
+            explicit = set(argv if argv is not None else sys.argv[1:])
+            a.policy = a.policy or agent_cfg.get("policy")
+            a.agent = a.agent or agent_cfg.get("agent")
+            a.principal = a.principal or agent_cfg.get("principal")
+            if "--log" not in explicit and agent_cfg.get("log"):
+                a.log = agent_cfg["log"]
+            if "--label-store" not in explicit and agent_cfg.get("label_store"):
+                a.label_store = agent_cfg["label_store"]
+            if not a.overlay:
+                a.overlay, a.overlay_key = agent_cfg.get("overlays", []), a.overlay_key or agent_cfg.get("overlay_key")
+            a.emit_events = a.emit_events or agent_cfg.get("emit_events")
+        missing = [f for f in ("policy", "agent", "principal") if not getattr(a, f)]
+        if missing:
+            print(f"proxy needs --{', --'.join(missing)} (or a --config that sets them)", file=sys.stderr)
+            return 2
+        Path(a.log).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
     if a.cmd == "verify-log":
         ok, _, msg = verify(a.file)
@@ -240,6 +271,13 @@ def main(argv: list[str] | None = None) -> int:
             out["observed"] = [{"rule": m.rule_id, "would": m.action, "reason": m.reason} for m in d.observed]
         print(json.dumps(out, indent=2))
         return 0 if d.allowed else 1
+
+    if agent_cfg is not None:
+        from .aggregate import Aggregator
+
+        gw = Gateway(engine, session, Ledger(a.log), hide_out_of_scope=not a.show_all_tools, on_decision=emitter)
+        Aggregator(gw, agent_cfg["servers"]).run()
+        return 0
 
     upstream = a.upstream[1:] if a.upstream[:1] == ["--"] else a.upstream
     if not upstream:
