@@ -1,0 +1,26 @@
+version: 1
+default: deny
+tools:
+  # The real filesystem MCP server, rooted at the finance share: what it returns is finance data.
+  filesystem.read_text_file:      { reads: [finance] }
+  filesystem.read_file:           { reads: [finance] }
+  filesystem.read_multiple_files: { reads: [finance] }
+  filesystem.list_directory:      {}
+  filesystem.search_files:        {}
+  filesystem.get_file_info:       {}
+  filesystem.list_allowed_directories: {}
+  filesystem.write_file:          { writes: [finance], risk: high }
+  filesystem.edit_file:           { writes: [finance], risk: high }
+  # Company email (simulated).
+  corp.email.send:
+    sink: external
+    args: [to, cc, bcc, subject, body]
+    egress_rules: [{ args: [to, cc, bcc], kind: email, pattern: "*@corp.example", sink: internal }]
+agents:
+  - id: claude-desktop
+    purpose: Answer questions about the finance share and email colleagues
+    on_behalf_of: ["user:*@corp.example"]
+    allow: [filesystem.read_*, filesystem.list_*, filesystem.search_files, filesystem.get_file_info, corp.email.send]
+    deny: [filesystem.write_file, filesystem.edit_file, filesystem.move_file]
+flows:
+  - { id: finance-stays-in, from: finance, to: external, action: deny, precision: value, residual: allow }

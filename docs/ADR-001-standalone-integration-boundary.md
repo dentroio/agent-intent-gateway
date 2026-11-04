@@ -37,6 +37,7 @@ dentro.io is the umbrella for three products: Clarion (enterprise policy intent)
    - backend-minted stream tokens (WO-SEG-006), plus the proposed `agt`/`prn` claims as an ADR-GW-002 amendment;
    - the steering gateway class policy routing MCP traffic to AIG (WO-SEG-007);
    - an owner for `proxy_broker` placement decisions (Clarion owns placement, AegisFlux owns local enforcement, and AIG is neither).
+   - the AegisFlux endpoint agent driving `aig wrap` through a per-user helper, with drift findings and process-lineage checks ([draft work order](proposals/AEGISFLUX-WO-DRAFT-endpoint-mcp-gateway-wrapping.md)).
 7. **Drift is detected, not absorbed silently.** `python scripts/check_contracts.py <path-to-aegisflux-checkout>` compares the pinned copies with a current checkout.
 8. **Later, a shared contracts package.** Once the Clarion–AegisFlux integration settles, the pinned schemas move to one dentro.io contracts package (intent, artifact, outcome event, identity token). Each product then depends on that package, never on another product.
 

@@ -85,6 +85,29 @@ aig verify-log decisions.jsonl
 
 Denied calls never reach the upstream server. The agent receives a normal MCP tool result with `isError: true` and the reason, so it can recover. Out-of-scope tools are hidden from `tools/list` by default.
 
+## Deploying on endpoints: `aig wrap` and aggregator mode
+
+On a machine where AI clients use local MCP servers, `aig wrap` puts AIG in front of them:
+
+```bash
+aig wrap                 # plan: which clients and servers it would wrap (writes nothing)
+aig wrap --apply         # rewrite the configs, with backups
+aig wrap --check         # drift: gateway removed, servers added outside it, unwrapped clients (exit 1)
+aig wrap --undo          # restore everything
+```
+
+It knows Claude Desktop, Claude Code (user and per-project), Cursor, Windsurf and VS Code. For each server map it moves the stdio servers into one **aggregator config** and leaves the client a single entry:
+
+```json
+"mcpServers": { "aig": { "command": "aig", "args": ["proxy", "--config", "~/.aig/agents/claude-desktop-93beeb50.json"] } }
+```
+
+`aig proxy --config` starts all of that agent's servers behind **one gateway session**, so data read through one server and sent out through another is caught. Tools appear to the agent as `server__tool` and in policy as `server.tool` (for example `filesystem.read_text_file`). Secrets stay in the aggregator config, which is readable only by the user; `--json` plans never contain server arguments or environment values. Remote (URL) servers are reported, not rewritten: they need the central gateway or traffic steering.
+
+[`examples/live-filesystem/`](examples/live-filesystem) runs this against the official filesystem MCP server: ledger values emailed outside are refused, ordinary mail goes through, and writes to the share are refused.
+
+AegisFlux can drive `aig wrap` from its endpoint agent (plan, apply, drift findings, process lineage). That is written up as a [draft AegisFlux work order](docs/proposals/AEGISFLUX-WO-DRAFT-endpoint-mcp-gateway-wrapping.md), not yet filed.
+
 ## HTTP gateway mode (behind the AegisFlux steering gateway)
 
 `aig serve` runs the gateway as an MCP Streamable HTTP service, so it can sit behind AegisFlux's steering gateway as the content-aware layer that ADR-GW-003 leaves out of phase one:
