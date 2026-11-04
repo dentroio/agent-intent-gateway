@@ -102,6 +102,23 @@ def main(argv: list[str] | None = None) -> int:
     rt.add_argument("--md", help="write the scoreboard as Markdown")
     overlays(rt)
 
+    wr = sub.add_parser("wrap", help="put AIG in front of the MCP servers this machine's AI clients use "
+                                     "(plan by default; --apply, --check, --undo)")
+    mode = wr.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="rewrite client configs (with backups)")
+    mode.add_argument("--check", action="store_true", help="report drift and servers outside the gateway; exit 1 if any")
+    mode.add_argument("--undo", action="store_true", help="restore every wrapped config")
+    wr.add_argument("--json", action="store_true", help="machine-readable output (no server arguments or env values)")
+    wr.add_argument("--client", action="append", default=[], help="only these clients (claude-desktop, claude-code, "
+                    "cursor, windsurf, vscode)")
+    wr.add_argument("--project", action="append", default=[], help="also project-level configs under this directory")
+    wr.add_argument("--home", help="the user's home directory (default: yours; an endpoint agent passes each user's)")
+    wr.add_argument("--state-dir", help="where aggregator configs, backups and state live (default: <home>/.aig)")
+    wr.add_argument("--policy", help="gateway policy for the wrapped agents (default: <state-dir>/policy.yaml)")
+    wr.add_argument("--agent", help="agent id in the policy (default: the client id, e.g. claude-desktop)")
+    wr.add_argument("--principal", help="who the agents act for (default: user:<login>@<host>)")
+    wr.add_argument("--aig-command", help="command that runs aig on this machine (default: found on PATH)")
+
     cn = sub.add_parser("console", help="serve the AIG console for a gateway's policy, log and evidence")
     cn.add_argument("--policy", required=True)
     cn.add_argument("--log", default="aig-decisions.jsonl", help="the gateway's decision log")
@@ -147,6 +164,31 @@ def main(argv: list[str] | None = None) -> int:
             print(f"proxy needs --{', --'.join(missing)} (or a --config that sets them)", file=sys.stderr)
             return 2
         Path(a.log).expanduser().parent.mkdir(parents=True, exist_ok=True)
+
+    if a.cmd == "wrap":
+        from . import wrap as w
+
+        home = Path(a.home).expanduser() if a.home else None
+        st = w.default_settings(home, Path(a.state_dir).expanduser() if a.state_dir else None)
+        if a.policy:
+            st.policy = str(Path(a.policy).expanduser())
+        st.agent, st.principal = a.agent, a.principal or st.principal
+        if a.aig_command:
+            st.aig_command = a.aig_command.split()
+        projects = [Path(p).expanduser() for p in a.project]
+        only = set(a.client) or None
+        if a.undo:
+            report = w.undo(st)
+        elif a.check:
+            report = w.check(st, projects, only)
+        elif a.apply:
+            report = w.apply(st, projects, only)
+        else:
+            report = w.plan(st, projects, only)
+        print(json.dumps(report, indent=2) if a.json else w.render(report))
+        if not (a.apply or a.check or a.undo or a.json):
+            print("\nNothing was changed. Run again with --apply to wrap.")
+        return 1 if a.check and not report["ok"] else 0
 
     if a.cmd == "verify-log":
         ok, _, msg = verify(a.file)
