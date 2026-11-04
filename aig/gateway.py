@@ -68,6 +68,11 @@ class Gateway:
         params = msg.get("params") or {}
         tool = params.get("name", "")
         args = params.get("arguments") or {}
+        if "id" in msg and self._pending_calls.get(_key(msg["id"])):
+            # JSON-RPC ids must be unique while in flight; reusing one could make the gateway
+            # attribute one tool's result (and its data labels) to another.
+            return None, {"jsonrpc": "2.0", "id": msg["id"],
+                          "error": {"code": -32600, "message": "request id already in flight; use a unique id"}}
         with self._lock:
             decision = self.engine.evaluate(self.session, tool, args)
             final = decision.action

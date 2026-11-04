@@ -58,6 +58,42 @@ def test_evidence_names_argument_values_and_origin(idx):
     assert "body" in text and "'tx1042'" in text and "finance.query_ledger" in text and "subject" not in text
 
 
+@pytest.mark.parametrize("body", [
+    "TX-\u0661\u0660\u0664\u0662",                      # Arabic-Indic digits
+    LEDGER[::-1],                                          # reversed
+    __import__("codecs").encode("contoso and fabrikam", "rot13"),
+    base64.b32encode(LEDGER.encode()).decode(),            # base32
+    base64.b64encode(__import__("gzip").compress(LEDGER.encode())).decode(),   # gzip + base64
+])
+def test_adversarial_encodings_found(idx, body):
+    assert "finance" in idx.find({"body": body})
+
+
+def test_value_split_across_arguments_found(idx):
+    found = idx.find({"subject": "TX-10", "body": "42 owed"})
+    assert {"subject", "body"} <= found["finance"].args
+
+
+def test_value_split_across_calls_found_on_completing_piece(idx):
+    assert idx.find({"body": "Contoso 72"}) == {}
+    found = idx.find({"body": "300 later"}, history={"body": "contoso72"})
+    assert "earlier calls" in found["finance"].args and "72300" in found["finance"].strong
+    # a value entirely in earlier calls is not blamed on this call
+    assert idx.find({"body": "hello"}, history={"body": "tx1042"}) == {}
+
+
+def test_email_address_parts_are_not_words():
+    i = ValueIndex()
+    i.add('{"from": "ap@fabrikam.example", "body": "catering invoice"}', {"x": "t"})
+    assert "example" not in i.words and "fabrikam" not in i.words and "catering" in i.words
+
+
+def test_decompression_is_bounded():
+    from aig.values import MAX_UNPACK, _unpack
+    bomb = __import__("gzip").compress(b"0" * (MAX_UNPACK * 8))
+    assert len(_unpack(bomb)) <= MAX_UNPACK
+
+
 def test_overflow_fails_closed():
     i = ValueIndex(max_atoms=3)
     i.add(LEDGER, {"finance": "finance.query_ledger"})

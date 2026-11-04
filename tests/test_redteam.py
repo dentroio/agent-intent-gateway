@@ -19,7 +19,8 @@ def test_scenario(spec):
         pytest.xfail(" ".join(spec["known_issue"].split()))
     assert r.passed, f"{r.id}: {r.verdict}; steps={[(s.tool, s.outcome, s.reasons) for s in r.steps]}"
     if r.kind == "attack":
-        assert not any(e.startswith("email to") for e in r.external_sends), r.external_sends
+        leaked = [e for e in r.external_sends if e.startswith("email to")]
+        assert len(leaked) <= spec.get("leaks_before_block", 0), r.external_sends
 
 
 def test_library_covers_attacks_and_workloads():

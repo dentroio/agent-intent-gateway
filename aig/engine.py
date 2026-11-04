@@ -13,13 +13,14 @@ The most restrictive outcome wins.
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Any
 
 from .labels import LabelStore
-from .values import Evidence, ValueIndex
+from .values import HISTORY, Evidence, ValueIndex, _arg_texts, _compact, _norm
 from .policy import SEVERITY, Agent, FlowRule, Policy
 
 
@@ -36,6 +37,9 @@ class Session:
     # extra identity context recorded with every decision (instance, device, token id)
     attrs: dict[str, str] = field(default_factory=dict)
     values: ValueIndex = field(default_factory=ValueIndex)   # value-level tracking (aig.values)
+    # What this session already sent to each non-internal sink, so split data is found
+    outbound: dict[str, dict[str, str]] = field(default_factory=dict)  # sink -> argument -> compact tail
+    sent_words: dict[str, dict[str, set[str]]] = field(default_factory=dict)   # sink -> label -> words
 
 
 @dataclass(frozen=True)
@@ -88,8 +92,14 @@ def _matches(name: str, patterns: tuple[str, ...]) -> str | None:
     return None
 
 
+def _principal_pattern(p: str) -> re.Pattern[str]:
+    # '*' matches within one part of an identity, never across '@', ':', '#', '/' or whitespace,
+    # so "user:*@corp.example" cannot accept "user:mallory@evil.example#@corp.example".
+    return re.compile("".join(r"[^@:#/\s]*" if c == "*" else re.escape(c) for c in p) + r"\Z")
+
+
 def _principal_ok(principal: str, allowed: tuple[str, ...]) -> bool:
-    return any(fnmatchcase(principal, p) for p in allowed)
+    return any(_principal_pattern(p).match(principal) for p in allowed)
 
 
 class Engine:
@@ -170,7 +180,8 @@ class Engine:
             verb = flow.action.replace("_", " ")
             if flow.precision == "value":
                 if present is None:
-                    present = session.values.find(args)
+                    present = session.values.find(args, history=session.outbound.get(sink),
+                                                  sent_words=session.sent_words.get(sink))
                 if flow.from_ in present:
                     effective = flow.action
                     ev = present[flow.from_]
@@ -228,6 +239,15 @@ class Engine:
         if tool is None:
             return
         args = args or {}
+
+        sink = tool.sink_for(args)
+        if sink != "internal" and session.values.strong:
+            hist = session.outbound.setdefault(sink, {})
+            for name, text in _arg_texts(args):
+                hist[name] = (hist.get(name, "") + _compact(_norm(text)))[-HISTORY:]
+            words = session.sent_words.setdefault(sink, {})
+            for label, ev in session.values.find(args, raw=True).items():
+                words.setdefault(label, set()).update(ev.words)
 
         if tool.stores and session.labels:
             resource = tool.resource(tool.stores, args) or tool.stores

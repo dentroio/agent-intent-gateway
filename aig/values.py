@@ -29,10 +29,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import codecs
 import html
 import json
 import re
 import unicodedata
+import zlib
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 from urllib.parse import unquote
@@ -48,6 +50,9 @@ _NUMBER = re.compile(r"(?<![a-z0-9.])\d[\d,]*(?:\.\d+)?")
 _WORD = re.compile(r"[a-z]{5,}")
 _B64 = re.compile(r"[A-Za-z0-9+/_-]{16,}={0,2}")
 _HEX = re.compile(r"\b(?:[0-9a-fA-F]{2}){8,}\b")
+_B32 = re.compile(r"[A-Z2-7]{16,}=*")
+MAX_UNPACK = 1 << 20       # decompressed bytes per encoded token
+HISTORY = 4096             # compact characters of earlier outbound calls kept per sink
 
 # Words too common to identify anything on their own.
 STOPWORDS = frozenset("""
@@ -65,7 +70,10 @@ value vendor where which while within without would years""".split())
 
 
 def _norm(text: str) -> str:
-    return unicodedata.normalize("NFKC", text).casefold()
+    t = unicodedata.normalize("NFKC", text).casefold()
+    if not t.isascii():   # any script's decimal digits count as digits (Arabic-Indic, Devanagari, ...)
+        t = "".join(str(unicodedata.decimal(c)) if c.isdecimal() and not c.isascii() else c for c in t)
+    return t
 
 
 def _compact(text: str) -> str:
@@ -130,7 +138,8 @@ def extract(text: str) -> Atoms:
         for raw in _NUMBER.findall(t):
             if (n := _norm_number(raw)) is not None:
                 out.strong.add(n)
-        out.words.update(w for w in _WORD.findall(t) if w not in STOPWORDS)
+        # Words inside email addresses ("example" in ap@fabrikam.example) are not data; the address is.
+        out.words.update(w for w in _WORD.findall(_EMAIL.sub(" ", t)) if w not in STOPWORDS)
     return out
 
 
@@ -143,10 +152,28 @@ def _printable(b: bytes) -> str | None:
     return s if s and ok / len(s) > 0.9 else None
 
 
+def _unpack(b: bytes) -> bytes:
+    """Undo gzip / zlib compression, bounded so a decompression bomb can't stall the gateway."""
+    if b[:2] == b"\x1f\x8b" or (len(b) > 1 and b[0] == 0x78 and (b[0] * 256 + b[1]) % 31 == 0):
+        try:
+            d = zlib.decompressobj(zlib.MAX_WBITS | 32)   # auto-detect gzip or zlib header
+            return d.decompress(b, MAX_UNPACK)
+        except zlib.error:
+            return b
+    return b
+
+
+def _decoded_text(b: bytes) -> str | None:
+    return _printable(_unpack(b))
+
+
 def variants(text: str, depth: int = 0) -> list[str]:
     """The text plus every decoding of it the gateway knows how to undo."""
     out = [text]
-    for dec in (unquote(text), unquote(unquote(text)), html.unescape(text)):
+    cands = [unquote(text), unquote(unquote(text)), html.unescape(text)]
+    if depth == 0:
+        cands += [text[::-1], codecs.encode(text, "rot13")]   # reversal and ROT13 cost nothing to undo
+    for dec in cands:
         if dec not in out:
             out.append(dec)
     if depth >= MAX_DECODE_DEPTH:
@@ -155,13 +182,19 @@ def variants(text: str, depth: int = 0) -> list[str]:
     for tok in _B64.findall(text):
         for fn in (base64.b64decode, base64.urlsafe_b64decode):
             try:
-                if (s := _printable(fn(tok + "=" * (-len(tok) % 4)))) is not None:
+                if (s := _decoded_text(fn(tok + "=" * (-len(tok) % 4)))) is not None:
                     decoded.append(s)
                     break
             except (binascii.Error, ValueError):
                 continue
+    for tok in _B32.findall(text):
+        try:
+            if (s := _decoded_text(base64.b32decode(tok + "=" * (-len(tok) % 8)))) is not None:
+                decoded.append(s)
+        except (binascii.Error, ValueError):
+            pass
     for tok in _HEX.findall(text):
-        if (s := _printable(bytes.fromhex(tok))) is not None:
+        if (s := _decoded_text(bytes.fromhex(tok))) is not None:
             decoded.append(s)
     for s in decoded:
         out.extend(v for v in variants(s, depth + 1) if v not in out)
@@ -217,12 +250,15 @@ class ValueIndex:
                     self._prefixes.setdefault(atom[:MIN_COMPACT], []).append(atom)
         return self._prefixes
 
-    def _in_compact(self, compact: str) -> set[str]:
-        """Strong atoms that occur anywhere inside mangled text: one dict lookup per position."""
+    def _in_compact(self, compact: str, min_end: int = 0) -> set[str]:
+        """Strong atoms that occur anywhere inside mangled text: one dict lookup per position.
+
+        With min_end, only occurrences that end after that offset count (used to search
+        earlier outbound calls + this call, for matches that reach into this call)."""
         prefixes, found = self._prefix_index(), set()
-        for i in range(len(compact) - MIN_COMPACT + 1):
+        for i in range(max(0, min_end - 64), len(compact) - MIN_COMPACT + 1):
             for atom in prefixes.get(compact[i:i + MIN_COMPACT], ()):
-                if compact.startswith(atom, i):
+                if compact.startswith(atom, i) and i + len(atom) > min_end:
                     found.add(atom)
         return found
 
@@ -244,8 +280,13 @@ class ValueIndex:
                 for label, origin in labels.items():
                     slot.setdefault(label, origin)
 
-    def find(self, args: dict[str, Any]) -> dict[str, Evidence]:
-        """Labels whose values appear in these arguments, with evidence."""
+    def find(self, args: dict[str, Any], history: dict[str, str] | None = None,
+             sent_words: dict[str, set[str]] | None = None, raw: bool = False) -> dict[str, Evidence]:
+        """Labels whose values appear in these arguments, with evidence.
+
+        history: per argument, compact text of that argument in earlier calls to the same
+        sink, so data split across several calls is found when its last piece is sent. sent_words: words of each
+        label already sent to that sink. raw=True skips the presence threshold."""
         hits: dict[str, Evidence] = {}
 
         def hit(label: str, origin: str, arg: str) -> Evidence:
@@ -266,7 +307,37 @@ class ValueIndex:
                     for label, origin in self.words[atom].items():
                         hit(label, origin, arg).words.add(atom)
 
-        present = {l: e for l, e in hits.items() if e.strong or len(e.words) >= WORD_THRESHOLD}
+        # Data split across arguments, or across this call and earlier ones to the same sink.
+        leaves = _arg_texts(args)
+        if leaves and self.strong:
+            single = {a for ev in hits.values() for a in ev.strong}   # already found in one argument
+            names = sorted({n for n, _ in leaves})
+            parts = [_compact(_norm(t)) for _, t in leaves]
+            searches = [("".join(parts), 0, names, False), ("".join(reversed(parts)), 0, names, False)]
+            for name in names:   # each argument continued from the same argument in earlier calls
+                prev = (history or {}).get(name, "")
+                if prev:
+                    cur = "".join(_compact(_norm(t)) for n, t in leaves if n == name)
+                    searches.append((prev + cur, len(prev), [name], True))
+            for joined, start, where, earlier in searches:
+                for atom in self._in_compact(joined, start):
+                    if atom in single:
+                        continue
+                    for label, origin in self.strong[atom].items():
+                        ev = hit(label, origin, where[0])
+                        ev.args.update(where)
+                        if earlier:
+                            ev.args.add("earlier calls")
+                        ev.strong.add(atom)
+        if raw:
+            return hits
+
+        sent_words = sent_words or {}
+        present = {l: e for l, e in hits.items()
+                   if e.strong or len(e.words | sent_words.get(l, set())) >= WORD_THRESHOLD}
+        for l, e in present.items():
+            if not e.strong and len(e.words) < WORD_THRESHOLD:
+                e.args.add("earlier calls")
         for label, origin in self.overflow.items():
             present.setdefault(label, Evidence(label, origin, overflow=True))
         return present

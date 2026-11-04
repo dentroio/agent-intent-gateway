@@ -19,9 +19,11 @@ tools:
   docs.search:             { reads: [internal], loads: docs, args: [q] }
   docs.write:              { writes: [internal], stores: docs, store_key: path, args: [path, content] }
   web.fetch:               { reads: [untrusted], sink: external, args: [url] }   # the URL itself leaves the building
-  email.read_inbox:        { reads: [untrusted], args: [] }                      # inbound mail is attacker-controllable
+  # Internal mail is a shared store: what one agent sends, another reads from the inbox.
+  email.read_inbox:        { reads: [untrusted], loads: mail, args: [] }          # inbound mail is attacker-controllable
   email.send:
     sink: external
+    stores: mail
     args: [to, cc, bcc, subject, body]
     egress_rules:
       # Internal only if every recipient in every field is one well-formed corp address.
@@ -62,3 +64,5 @@ flows:
   # Anything the agent read from an attacker-controllable source may not
   # silently drive a high-risk action (indirect prompt injection).
   - { id: untrusted-no-high-risk, from: untrusted, to: "risk:high", action: deny }
+  # ...and may not rewrite shared documents other agents will read (store poisoning).
+  - { id: untrusted-no-shared-writes, from: untrusted, to: "writes:internal", action: require_approval }

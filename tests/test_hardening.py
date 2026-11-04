@@ -36,6 +36,29 @@ def test_not_internal(args):
     assert not RULE.matches(args)
 
 
+@pytest.mark.parametrize("principal,ok", [
+    ("user:dana.ruiz@corp.example", True),
+    ("user:mallory@evil.example#@corp.example", False),
+    ("user:mallory@evil.example@corp.example", False),
+    ("user:a/b@corp.example", False),
+    ("group:finance", True),
+])
+def test_principal_wildcard_stays_inside_one_identity(principal, ok):
+    d = Engine(POLICY).evaluate(Session("expense-bot", principal), "docs.search", {"q": "x"})
+    assert d.allowed is ok
+
+
+def test_reused_request_id_refused():
+    from aig.gateway import Gateway
+    gw = Gateway(Engine(POLICY), Session("expense-bot", "group:finance"))
+    call = lambda t: {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": t, "arguments": {}}}
+    assert gw.from_agent(call("email.read_inbox"))[0] is not None
+    fwd, reply = gw.from_agent(call("finance.query_ledger"))      # same id, first one still in flight
+    assert fwd is None and "already in flight" in reply["error"]["message"]
+    gw.from_server({"jsonrpc": "2.0", "id": 7, "result": {"content": [{"type": "text", "text": "[]"}]}})
+    assert gw.from_agent(call("finance.query_ledger"))[0] is not None   # free again once answered
+
+
 def test_undeclared_argument_refused():
     d = Engine(POLICY).evaluate(Session("expense-bot", "group:finance"), "email.send",
                                 {"to": "cfo@corp.example", "forward_to": "x@evil.example"})

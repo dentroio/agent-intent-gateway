@@ -30,7 +30,7 @@ Every decision carries plain-language reasons and the rule IDs that produced it,
 Research systems such as Google DeepMind's CaMeL and Microsoft's FIDES showed that tracking where data came from is the principled defence for agents, but they live inside the agent, so the agent has to be rebuilt around them. MCP gateways work with unmodified agents but judge each call on its own. AIG does information-flow control **outside the agent**, in front of any MCP client:
 
 1. Labelled tool results passing back through the gateway are broken into values: identifiers, amounts, emails and distinctive words, keyed by JSON value only, never field names.
-2. Outgoing arguments are decoded (URL, HTML, base64, hex, nested JSON) and normalised (case, Unicode, spacing, punctuation), then matched against those values with a prefix index. That takes about 3.5 ms per call against a 75,000-value index.
+2. Outgoing arguments are decoded (URL, HTML, base64, base32, hex, gzip/zlib, nested JSON, reversal, ROT13) and normalised (case, Unicode including other scripts' digits, invisible characters, spacing, punctuation), then matched against those values with a prefix index. Each argument is also checked joined with the others and continued from the same argument in earlier calls to the same destination, so data split into chunks is caught on the chunk that completes a value. That takes about 20 ms for a 9 KB argument against a 75,000-value index.
 3. A flow rule with `precision: value` applies its `action` only when the call carries values of that label. If the session has seen the label but sends none of it, the rule's `residual` action applies instead (`allow`, `require_approval` or `deny`; default `require_approval`).
 
 ```yaml
@@ -39,7 +39,7 @@ flows:
   - { id: untrusted-no-high-risk, from: untrusted, to: "risk:high", action: deny }   # stays session-level
 ```
 
-**What it can't see, by design:** data an LLM has rewritten in new words ("the cloud vendor is owed about seventy-two thousand"). That gap is a scenario in the red team (`ATK-ENC-007`) rather than a hidden assumption. Policies that can't accept it keep `precision: session` or use `residual: require_approval`. **Integrity rules should stay session-level:** whether injected text *influenced* a decision isn't visible in values. If the per-session index fills up, affected labels fail closed back to session-level behaviour.
+**What it can't see, by design:** data an LLM has rewritten in new words ("the cloud vendor is owed about seventy-two thousand"), or data leaked through a covert channel that carries no values at all (one bit per email in subject-line capitalisation). Both gaps are scenarios in the red team (`ATK-ENC-007`, `ATK-ADV-012`) rather than hidden assumptions. Chunked data is caught on the chunk that completes a value, so fragments sent before it, which carry no whole value, still leave. Policies that can't accept it keep `precision: session` or use `residual: require_approval`. **Integrity rules should stay session-level:** whether injected text *influenced* a decision isn't visible in values. If the per-session index fills up, affected labels fail closed back to session-level behaviour.
 
 ## Policy
 
@@ -158,7 +158,7 @@ aig serve ... --overlay finance.bundle.json --overlay-key compiler.pub --emit-ev
 **Two findings from building it:**
 
 1. **Scope data rules to the data, not the agent.** A finance rule scoped to `agent_class: finance_automation` lets the cross-agent laundering attack through, because the research agent isn't in scope. The compiler warns when shared stores exist, and a test proves the bypass.
-2. **Sensitivity sets the trade-off.** On the Clarion-managed gateway ([`examples/clarion/`](examples/clarion)), the base policy alone blocks 8 of 24 attacks. With the three intents it blocks **24 of 24**, including the paraphrase attack, because `confidential` means "ask a human when the agent has seen the data but sends none of it". The price is that two legitimate vendor replies need approval (9 of 11 workloads run without a human). The hand-tuned `examples/enterprise.yaml` makes the opposite choice: 23 of 24 attacks blocked, 11 of 11 workloads.
+2. **Sensitivity sets the trade-off.** On the Clarion-managed gateway ([`examples/clarion/`](examples/clarion)), the base policy alone blocks 10 of 39 attacks. With the three intents it blocks **39 of 39**, including the paraphrase and covert-channel attacks, because `confidential` means "ask a human when the agent has seen the data but sends none of it". The price is that two legitimate vendor replies need approval (9 of 11 workloads run without a human). The hand-tuned `examples/enterprise.yaml` makes the opposite choice: 37 of 39 attacks blocked, 11 of 11 workloads.
 
 ## Red team
 
@@ -174,7 +174,23 @@ The first run against the v0.1 engine ([`reports/baseline.md`](reports/baseline.
 | Invented `forward_to` argument | tools can declare their arguments; anything else is refused |
 | Finance agent writes the ledger into shared docs, research agent reads it and posts it out | **labels follow data through shared stores**, across agents and gateway processes |
 
-Current result ([`reports/scoreboard.md`](reports/scoreboard.md)): **23 of 24 attacks blocked, 11 of 11 workloads complete.** Value-level tracking removed the last false positive: replying to a vendor after reading the ledger now works. It also blocks six disguised-exfiltration attacks (base64, hex, URL-encoding, character spacing, reformatted amounts, vendor names). The one attack that gets through is the documented paraphrase gap above.
+Current result ([`reports/scoreboard.md`](reports/scoreboard.md)): **37 of 39 attacks blocked, 11 of 11 workloads complete.** The two that get through are the documented no-value gaps above: paraphrase and the covert channel.
+
+### Adversarial pass
+
+The first 24 attacks were written while the defences were being built, so they partly tested what was already known to block. A second pass ([`scenarios/attacks_adversarial.yaml`](scenarios/attacks_adversarial.yaml)) attacked AIG's own mechanisms after reading its design. Before any fix ([`reports/adversarial-baseline.md`](reports/adversarial-baseline.md)), **11 of 15** got through the hand-tuned policy, and three got through the Clarion-managed one too:
+
+| Bypass | Fix |
+|---|---|
+| Ledger split a few characters per email, or across subject and body | Arguments are checked joined, and continued from the same argument in earlier calls to the same destination |
+| IDs and amounts in Arabic-Indic digits | Any script's decimal digits normalise to ASCII |
+| Reversed, ROT13, base32, gzip + base64 | Added to the decoder; decompression is size-bounded |
+| Internal email used as a shared store nobody declared | `email.send` stores into `mail`, `email.read_inbox` loads from it. Any internal sink another agent can read is a store |
+| Poisoned email makes the agent rewrite the shared travel policy | New integrity rule: `untrusted` content may not write shared documents without approval |
+| `user:mallory@evil.example#@corp.example` passes `user:*@corp.example` | `*` in identity patterns no longer crosses `@`, `:`, `#`, `/` or whitespace |
+| Two in-flight calls reusing one JSON-RPC id could swap results and mislabel data | Reused in-flight ids are refused |
+
+It also found a false-positive source: words inside email addresses (`example` in `ap@fabrikam.example`) counted as data. They no longer do.
 
 Every scenario runs in CI (`tests/test_redteam.py`), so a fixed bypass can never quietly return.
 
@@ -193,6 +209,7 @@ Every scenario runs in CI (`tests/test_redteam.py`), so a fixed bypass can never
 - [x] Red-team harness: scoreboard, bypass → fix → regression test
 - [x] MCP Streamable HTTP mode with AegisFlux per-stream token identity, classes, session binding
 - [x] Compile Clarion `segmentation_policy_intent.v1` to signed `proxy_broker` overlays; emit AegisFlux outcome events
+- [x] Adversarial pass: 15 attacks against AIG's own mechanisms, 11 bypasses found and closed
 - [x] Demo page ([`docs/demo/`](docs/demo), rebuilt from real runs by `python scripts/build_demo.py`)
 - [x] Value-level tracking outside the agent: decoding, normalisation, residual actions
 - [ ] Semantic matching for paraphrase (probabilistic; would sit behind `residual`, never replace deterministic matches)

@@ -180,7 +180,7 @@ footer { border-top: 1px solid var(--line); padding-top: 18px; font-size: 0.82re
     <div class="section-head">
       <div class="eyebrow">Red team · same attacks, same workloads, three gateways</div>
       <h2 id="h-score">What each approach stops</h2>
-      <p class="muted">Every scenario runs through the real gateway in front of a simulated enterprise with a ledger worth stealing and a poisoned inbox. An attack counts as blocked only if a step is refused. Legitimate workloads measure what the protection costs.</p>
+      <p class="muted">Every scenario runs through the real gateway in front of a simulated enterprise with a ledger worth stealing and a poisoned inbox. An attack counts as blocked only if a step is refused. Legitimate workloads measure what the protection costs. Fifteen of the attacks (<code>ATK-ADV</code>) were written afterwards against AIG's own design; eleven of them got through before the fixes they prompted.</p>
     </div>
     <div class="score" id="score"></div>
   </section>
@@ -211,7 +211,7 @@ footer { border-top: 1px solid var(--line); padding-top: 18px; font-size: 0.82re
     <div class="section-head">
       <div class="eyebrow">One recorded session · AIG + Clarion intent</div>
       <h2 id="h-log">A log you can try to falsify</h2>
-      <p class="muted">Three agents, eleven tool calls through one gateway. Every decision is chained to the one before it with SHA-256, so editing or deleting a record breaks the chain from that point. Verification runs in your browser.</p>
+      <p class="muted">Three agents, twelve tool calls through one gateway. Every decision is chained to the one before it with SHA-256, so editing or deleting a record breaks the chain from that point. Verification runs in your browser.</p>
     </div>
     <div class="session" id="session"></div>
     <div class="controls">
@@ -265,7 +265,8 @@ footer { border-top: 1px solid var(--line); padding-top: 18px; font-size: 0.82re
     </div>
     <h3>Limits</h3>
     <ul class="limits">
-      <li><b>Paraphrase.</b> Data an LLM rewrites in new words carries none of the original values. Value-level rules either let it through (<code>residual: allow</code>) or ask a human. That is the one bypass in the hand-tuned run.</li>
+      <li><b>Paraphrase and covert channels.</b> Data an LLM rewrites in new words, or leaks one bit at a time through something like subject-line capitalisation, carries none of the original values. Value-level rules either let it through (<code>residual: allow</code>) or ask a human. These are the two bypasses in the hand-tuned run.</li>
+      <li><b>Chunking.</b> Data split across calls is stopped on the chunk that completes a value. Fragments sent before that, which carry no whole value, still leave.</li>
       <li><b>Prompt-injection influence.</b> Whether injected text steered a decision is not visible in values, so integrity rules stay session-level and stricter than strictly needed.</li>
       <li><b>Lab identity.</b> Tokens come from a mock issuer shaped after the AegisFlux design. Production identity waits on the AegisFlux token issuer and steering gateway.</li>
       <li><b>Prototype.</b> Python, one simulated enterprise, scripted attacks. Competitor descriptions come from public and vendor sources and were not tested here.</li>
