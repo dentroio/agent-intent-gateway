@@ -111,7 +111,7 @@ def _external_addresses(value: str, internal_domain: str = "corp.example") -> li
     return out
 
 
-def run_scenario(policy: Policy, spec: dict) -> ScenarioResult:
+def run_scenario(policy: Policy, spec: dict, ledger=None, on_decision=None, attrs_for=None) -> ScenarioResult:
     ent = Enterprise()
     engine = Engine(policy)   # one engine per scenario: shared state across its agents
     gateways: dict[tuple[str, str], Gateway] = {}
@@ -120,8 +120,10 @@ def run_scenario(policy: Policy, spec: dict) -> ScenarioResult:
     def gateway_for(agent: str, principal: str) -> Gateway:
         key = (agent, principal)
         if key not in gateways:
-            gateways[key] = Gateway(engine, Session(agent, principal),
-                                    approver=lambda *_: approve_now["value"])
+            attrs = attrs_for(agent, principal, spec) if attrs_for else {}
+            gateways[key] = Gateway(engine, Session(agent, principal, attrs=attrs),
+                                    approver=lambda *_: approve_now["value"], ledger=ledger,
+                                    on_decision=on_decision)
         return gateways[key]
 
     outputs: dict[str, str] = {}   # e.g. "ledger" -> last ledger text, "docs" -> last docs text

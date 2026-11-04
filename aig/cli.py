@@ -98,6 +98,15 @@ def main(argv: list[str] | None = None) -> int:
     rt.add_argument("--md", help="write the scoreboard as Markdown")
     overlays(rt)
 
+    cn = sub.add_parser("console", help="serve the AIG console for a gateway's policy, log and evidence")
+    cn.add_argument("--policy", required=True)
+    cn.add_argument("--log", default="aig-decisions.jsonl", help="the gateway's decision log")
+    cn.add_argument("--events", help="AegisFlux outcome events file written by --emit-events")
+    cn.add_argument("--redteam", help="red-team results JSON from aig redteam --json")
+    cn.add_argument("--host", default="127.0.0.1")
+    cn.add_argument("--port", type=int, default=3040)
+    overlays(cn)
+
     cp = sub.add_parser("compile", help="compile a Clarion intent into a signed gateway overlay")
     cp.add_argument("--intent", required=True, help="segmentation_policy_intent.v1 JSON")
     cp.add_argument("--policy", required=True, help="the gateway policy the overlay will apply to")
@@ -139,6 +148,25 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, PolicyError) as e:
         print(f"policy error: {e}", file=sys.stderr)
         return 2
+
+    if a.cmd == "console":
+        from .console import build_snapshot, serve
+
+        bundles = [json.loads(Path(f).read_text()) for f in a.overlay]
+        redteam = None
+        if a.redteam:
+            rt = json.loads(Path(a.redteam).read_text())
+            redteam = {"configs": [{"key": "current", "name": "Current policy", "description": a.policy,
+                                    "scoreboard": rt["scoreboard"], "results": rt["results"]}]}
+        snap = lambda: build_snapshot(policy, decisions_path=a.log, events_path=a.events, redteam=redteam,
+                                      bundles=bundles, gateway={"transport": "live", "policy_file": a.policy})
+        srv = serve(snap, a.host, a.port)
+        print(f"AIG console on http://{a.host}:{srv.server_address[1]}/", file=sys.stderr)
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        return 0
 
     if a.cmd == "compile":
         from .clarion import CompileError, compile_intent

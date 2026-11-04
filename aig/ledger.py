@@ -23,8 +23,9 @@ def _digest(prev: str, body: dict[str, Any]) -> str:
 
 
 class Ledger:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, clock=time.time):
         self.path = Path(path)
+        self.clock = clock
         self._prev = GENESIS
         self._lock = threading.Lock()
         if self.path.exists():
@@ -42,7 +43,7 @@ class Ledger:
             return self._append(event)
 
     def _append(self, event: dict[str, Any]) -> dict[str, Any]:
-        body = {"ts": time.time(), **event, "prev": self._prev}
+        body = {"ts": self.clock(), **event, "prev": self._prev}
         record = {**body, "hash": _digest(self._prev, body)}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as fh:

@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ported from the AegisFlux console (globals.css), which follows Clarion. Dark variants are
+   written into the component classes instead of AegisFlux's remap layer. */
+@layer base {
+  html {
+    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body { @apply bg-gray-50 text-slate-900 dark:bg-gray-950 dark:text-gray-100; margin: 0; }
+  html.dark { color-scheme: dark; }
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #f1f1f1; }
+::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+.dark ::-webkit-scrollbar-track { background: #111827; }
+.dark ::-webkit-scrollbar-thumb { background: #374151; }
+
+@layer components {
+  .btn { @apply inline-flex h-8 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 dark:focus-visible:ring-offset-gray-900; }
+  .btn-primary { @apply bg-clarion-blue text-white hover:opacity-95 dark:bg-blue-600; }
+  .btn-secondary { @apply border border-gray-200 bg-white text-slate-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700; }
+  .card { @apply rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800; }
+  .badge { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap; }
+  .badge-success { @apply bg-success-100 text-success-800 dark:bg-emerald-900/40 dark:text-emerald-200; }
+  .badge-warning { @apply bg-warning-100 text-warning-800 dark:bg-amber-900/40 dark:text-amber-200; }
+  .badge-danger { @apply bg-danger-100 text-danger-800 dark:bg-red-900/40 dark:text-red-200; }
+  .badge-info { @apply bg-primary-100 text-primary-800 dark:bg-blue-900/40 dark:text-blue-200; }
+  .badge-neutral { @apply bg-slate-100 text-slate-700 dark:bg-gray-700 dark:text-gray-200; }
+  .badge-purple { @apply bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200; }
+  .input { @apply h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm placeholder:text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100; }
+  .ux-mono-compact { @apply font-mono text-xs tracking-tight; }
+  .th { @apply px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-gray-400; }
+  .td { @apply px-4 py-2.5 align-top text-sm text-slate-700 dark:text-gray-200; }
+  .code-block { @apply overflow-x-auto rounded-md bg-slate-50 p-3 font-mono text-xs leading-relaxed text-slate-800 dark:bg-gray-900 dark:text-gray-200; }
+}

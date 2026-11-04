@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>AIG Console</title>
+    <script>
+      // Theme before first paint, as the AegisFlux / Clarion consoles do: stored choice, then host theme, then OS.
+      (function () {
+        var t = null
+        try { t = localStorage.getItem('aig_console_theme') } catch (e) {}
+        if (!t) { var h = document.documentElement.getAttribute('data-theme'); if (h === 'dark' || h === 'light') t = h }
+        if (!t && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark'
+        if (t === 'dark') document.documentElement.classList.add('dark')
+      })()
+    </script>
+    <script>window.__AIG_SNAPSHOT__ = null</script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

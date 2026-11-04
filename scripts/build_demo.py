@@ -155,7 +155,7 @@ eval(fs.readFileSync({json.dumps(str(DEMO / 'chain.js'))}, 'utf8') + '; globalTh
 const recs = JSON.parse(fs.readFileSync({json.dumps(str(tmp / 'records.json'))}, 'utf8'));
 (async () => {{
   const good = await AIGChain.verify(recs);
-  const bad = JSON.parse(JSON.stringify(recs)); bad[2].outcome = 'allow';
+  const bad = JSON.parse(JSON.stringify(recs)); bad[2].outcome = bad[2].outcome === 'allow' ? 'deny' : 'allow';
   const tampered = await AIGChain.verify(bad);
   const del = recs.filter((_, i) => i !== 4);
   const deleted = await AIGChain.verify(del);
