@@ -8,3 +8,5 @@ dist/
 *.jsonl
 !reports/*.jsonl
 aig-labels.json
+node_modules/
+ui/console/dist/
