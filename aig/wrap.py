@@ -401,3 +401,68 @@ def render(report: dict[str, Any]) -> str:
             lines.append(f"{r['status'].replace('_', ' ')}: {r['key']}")
         lines = lines or ["Nothing to restore."]
     return "\n".join(lines)
+
+
+# ---- onboarding: a starter policy from the tools the servers really offer --------------------
+STARTER_HEADER = """\
+# Starter policy written by `aig policy-init`.
+#
+# Every tool the servers offered is declared and allowed, so nothing changes for
+# the agent: the gateway only records what it does. Watch the decisions in
+# `aig console`, then tighten:
+#   1. label tools that return sensitive data:      reads: [finance]
+#   2. mark tools whose arguments leave the company: sink: external
+#   3. add data-flow rules, e.g.
+#      flows:
+#        - { from: finance, to: external, action: deny, precision: value, residual: require_approval }
+#   4. move risky tools from allow to require_approval or deny.
+# Tools a server adds later are refused until they are declared here.
+"""
+
+
+def discover_tools(servers: dict[str, dict], timeout: float = 60) -> dict[str, list[dict]]:
+    """Start each server, list its tools, stop it. Returns server -> tools (empty on failure)."""
+    from .aggregate import Upstream, server_key
+
+    out: dict[str, list[dict]] = {}
+    for name, spec in servers.items():
+        u = Upstream(server_key(name), spec, lambda *_: None)
+        u.start(timeout)
+        out[server_key(name)] = [] if u.error else u.tools
+        if u.error:
+            print(f"aig: could not list tools for {name}: {u.error}", file=sys.stderr)
+        u.stop()
+    return out
+
+
+def starter_policy(s: Settings, projects: list[Path] | None = None, only: set[str] | None = None,
+                   timeout: float = 60) -> tuple[dict[str, Any], list[str]]:
+    """Observe-first policy covering every client config found on this machine."""
+    tools: dict[str, dict] = {}
+    agents: dict[str, dict] = {}
+    notes: list[str] = []
+    for act in plan(s, projects, only)["actions"]:
+        if act["action"] == "unreadable":
+            continue
+        if act["action"] in ("wrapped", "add_to_wrap") and Path(act["agent_config"]).exists():
+            servers = json.loads(Path(act["agent_config"]).read_text()).get("servers", {})
+        else:
+            smap = _pointer_get(_read_json(Path(act["path"])), tuple(act["pointer"])) or {}
+            servers = {n: sp for n, sp in smap.items() if transport(sp) == "stdio" and not is_aig_entry(sp)
+                       and not sp.get("disabled")}
+        if not servers:
+            continue
+        found = discover_tools(servers, timeout)
+        agent_id = s.agent or act["client"]
+        a = agents.setdefault(agent_id, {
+            "id": agent_id, "purpose": f"{act['client']} (starter policy: every discovered tool allowed, all calls recorded)",
+            "on_behalf_of": ["user:*@*"], "allow": []})
+        for server, ts in found.items():
+            notes.append(f"{act['client']}: {server} offers {len(ts)} tool(s)")
+            for t in ts:
+                name = f"{server}.{t.get('name', '')}"
+                tools.setdefault(name, {})
+                if name not in a["allow"]:
+                    a["allow"].append(name)
+    policy = {"version": 1, "default": "deny", "tools": tools, "agents": list(agents.values()), "flows": []}
+    return policy, notes

@@ -198,3 +198,18 @@ def test_cli(home, tmp_path, capsys):
     assert main(args + ["--check", "--json"]) == 1
     report = json.loads(capsys.readouterr().out)
     assert report["schema"] == "aig_wrap_check.v1" and not report["ok"]
+
+
+def test_policy_init_discovers_real_tools_and_allows_everything(home, settings, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("AIG_CHAT_LOG", str(tmp_path / "chat.jsonl"))
+    pol, notes = w.starter_policy(settings, only={"claude-desktop"})
+    assert set(pol["tools"]) == {"files.read_file", "files.list_dir", "chat.post_message"}
+    [agent] = pol["agents"]
+    assert agent["id"] == "claude-desktop" and set(agent["allow"]) == set(pol["tools"]) and pol["flows"] == []
+    from aig import Engine, Session, parse_policy
+    d = Engine(parse_policy(pol)).evaluate(Session("claude-desktop", "user:dana@mac.local"), "files.read_file", {})
+    assert d.allowed                                         # observe-first: nothing changes for the agent
+    out = tmp_path / "p.yaml"
+    assert main(["policy-init", "--home", str(home), "--client", "claude-desktop", "--out", str(out)]) == 0
+    assert out.read_text().startswith("# Starter policy")
+    assert main(["policy-init", "--home", str(home), "--client", "claude-desktop", "--out", str(out)]) == 2   # no overwrite

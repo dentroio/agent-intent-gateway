@@ -90,7 +90,8 @@ class Upstream:
         env = {**os.environ, **{k: str(v) for k, v in (self.spec.get("env") or {}).items()}}
         cmd = [self.spec["command"], *[str(a) for a in self.spec.get("args", [])]]
         try:
-            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr,
+            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,   # inherit fd 2, whatever sys.stderr is
+                                        
                                          text=True, bufsize=1, env=env, cwd=self.spec.get("cwd"))
         except OSError as e:
             self.error = f"could not start {cmd[0]}: {e}"

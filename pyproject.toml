@@ -18,6 +18,9 @@ aig = "aig.cli:main"
 [tool.setuptools.packages.find]
 include = ["aig*"]
 
+[tool.setuptools.package-data]
+aig = ["console_static/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

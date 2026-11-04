@@ -22,7 +22,7 @@ from .engine import Engine, Session
 from .gateway import Gateway, run_stdio
 from .labels import LabelStore
 from .ledger import Ledger, verify
-from .policy import PolicyError, load_policy
+from .policy import PolicyError, load_policy, parse_policy
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -119,6 +119,16 @@ def main(argv: list[str] | None = None) -> int:
     wr.add_argument("--principal", help="who the agents act for (default: user:<login>@<host>)")
     wr.add_argument("--aig-command", help="command that runs aig on this machine (default: found on PATH)")
 
+    pi = sub.add_parser("policy-init", help="start this machine's MCP servers, list their tools, and write an "
+                                             "observe-first starter policy")
+    pi.add_argument("--home")
+    pi.add_argument("--state-dir")
+    pi.add_argument("--client", action="append", default=[])
+    pi.add_argument("--project", action="append", default=[])
+    pi.add_argument("--out", help="where to write the policy (default: <state-dir>/policy.yaml)")
+    pi.add_argument("--force", action="store_true", help="overwrite an existing policy")
+    pi.add_argument("--timeout", type=float, default=60, help="seconds to wait for each server to start")
+
     cn = sub.add_parser("console", help="serve the AIG console for a gateway's policy, log and evidence")
     cn.add_argument("--policy", required=True)
     cn.add_argument("--log", default="aig-decisions.jsonl", help="the gateway's decision log")
@@ -189,6 +199,29 @@ def main(argv: list[str] | None = None) -> int:
         if not (a.apply or a.check or a.undo or a.json):
             print("\nNothing was changed. Run again with --apply to wrap.")
         return 1 if a.check and not report["ok"] else 0
+
+    if a.cmd == "policy-init":
+        import yaml
+        from . import wrap as w
+
+        st = w.default_settings(Path(a.home).expanduser() if a.home else None,
+                                Path(a.state_dir).expanduser() if a.state_dir else None)
+        out = Path(a.out).expanduser() if a.out else Path(st.policy)
+        if out.exists() and not a.force:
+            print(f"{out} already exists; use --force to replace it", file=sys.stderr)
+            return 2
+        pol, notes = w.starter_policy(st, [Path(p).expanduser() for p in a.project], set(a.client) or None, a.timeout)
+        for n in notes:
+            print(n)
+        if not pol["tools"]:
+            print("No tools found: no local MCP servers, or none started.", file=sys.stderr)
+            return 3
+        load_policy_doc = parse_policy(pol)   # the gateway must accept what we write
+        del load_policy_doc
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(w.STARTER_HEADER + "\n" + yaml.safe_dump(pol, sort_keys=False))
+        print(f"wrote {out}: {len(pol['tools'])} tools, {len(pol['agents'])} agent(s), observe-first")
+        return 0
 
     if a.cmd == "verify-log":
         ok, _, msg = verify(a.file)
