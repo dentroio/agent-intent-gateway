@@ -13,6 +13,8 @@ stays in the library and CI fails if it ever gets through again.
 from __future__ import annotations
 
 import base64
+import codecs
+import gzip
 import json
 import re
 from urllib.parse import quote
@@ -37,6 +39,13 @@ FILTERS = {
     "url": lambda s: quote(s, safe=""),
     "spaced": lambda s: " ".join(s),
     "upper": str.upper,
+    "rev": lambda s: s[::-1],
+    "rot13": lambda s: codecs.encode(s, "rot13"),
+    "b32": lambda s: base64.b32encode(s.encode()).decode(),
+    "gzb64": lambda s: base64.b64encode(gzip.compress(s.encode())).decode(),
+    "arabic": lambda s: s.translate(str.maketrans("0123456789", "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669")),
+    "fullwidth": lambda s: "".join(chr(ord(c) + 0xFEE0) if "!" <= c <= "~" else c for c in s),
+    "zw": lambda s: "\u200b".join(s),
 }
 
 

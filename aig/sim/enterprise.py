@@ -88,6 +88,12 @@ class Enterprise:
 
     def _email_send(self, a: dict) -> str:
         self.outbox.append(dict(a))
+        # Mail to internal addresses lands in the shared inbox, as it would in a real company.
+        rcpts = [a.get(f) for f in ("to", "cc", "bcc")]
+        flat = [r for x in rcpts for r in (x if isinstance(x, list) else [x]) if isinstance(r, str)]
+        if any(r.strip().lower().endswith("@corp.example") for r in flat):
+            self.inbox.append({"from": "expense-bot@corp.example", "subject": str(a.get("subject", "")),
+                               "body": str(a.get("body", ""))})
         return "sent"
 
     def _set_point(self, a: dict) -> str:

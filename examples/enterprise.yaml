@@ -41,7 +41,7 @@ agents:
     agent_class: research_agent
     purpose: Answer questions using internal docs and the public web
     on_behalf_of: ["user:*@corp.example"]
-    allow: [docs.search, web.fetch, email.send]
+    allow: [docs.search, web.fetch, email.send, email.read_inbox]
     deny: [finance.*, hr.*, ot.*]
 
   - id: plant-monitor
