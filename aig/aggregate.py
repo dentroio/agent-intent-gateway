@@ -73,13 +73,25 @@ class UpstreamError(RuntimeError):
 
 
 class Upstream:
-    """One MCP server process the gateway speaks to on the agent's behalf."""
+    """One MCP server process the gateway speaks to on the agent's behalf.
 
-    def __init__(self, name: str, spec: dict[str, Any], on_response: Callable[[Upstream, dict], None]):
+    Speaks standard MCP stdio (one JSON message per line). Some servers use
+    LSP-style `Content-Length` framing instead; with `framing: auto` (the
+    default) a server that doesn't answer in the standard format is restarted
+    and tried with Content-Length, and the agent never notices. The agent side
+    of the gateway always speaks standard MCP.
+    """
+
+    PROBE = 8.0    # seconds a server gets to answer before the other framing is tried
+
+    def __init__(self, name: str, spec: dict[str, Any], on_response: Callable[[Upstream, dict], None],
+                 config_name: str | None = None):
         self.name = name
+        self.config_name = config_name or name
         self.spec = spec
         self.on_response = on_response
         self.proc: subprocess.Popen | None = None
+        self.framing: str | None = None    # newline | content-length, once known
         self.tools: list[dict] = []
         self.error: str | None = None
         self._ids = itertools.count(1)
@@ -87,23 +99,46 @@ class Upstream:
         self._lock = threading.Lock()
 
     def start(self, timeout: float = 60) -> None:
+        wanted = self.spec.get("framing", "auto")
+        if wanted not in ("auto", "newline", "content-length"):
+            self.error = f"{self.name}: framing must be auto, newline or content-length"
+            return
+        # auto: standard first; then Content-Length; then standard again with the full timeout,
+        # for a standard server that is merely slow to start (e.g. npx downloading it).
+        attempts = ([("newline", min(self.PROBE, timeout)), ("content-length", min(self.PROBE, timeout)),
+                     ("newline", timeout)] if wanted == "auto" else [(wanted, timeout)])
+        last_error = None
+        for framing, wait in attempts:
+            if not self._launch(framing):
+                return
+            try:
+                self.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
+                                            "clientInfo": {"name": "agent-intent-gateway", "version": __version__}}, wait)
+            except UpstreamError as e:
+                last_error = e
+                self._kill()
+                continue
+            try:
+                self.notify("notifications/initialized")
+                self.refresh_tools(timeout)
+            except UpstreamError as e:
+                self.error = str(e)
+            return
+        self.error = str(last_error)
+
+    def _launch(self, framing: str) -> bool:
         env = {**os.environ, **{k: str(v) for k, v in (self.spec.get("env") or {}).items()}}
         cmd = [self.spec["command"], *[str(a) for a in self.spec.get("args", [])]]
         try:
-            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,   # inherit fd 2, whatever sys.stderr is
-                                        
-                                         text=True, bufsize=1, env=env, cwd=self.spec.get("cwd"))
+            # stderr=None: the server inherits the gateway's fd 2, whatever sys.stderr is
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
+                                    env=env, cwd=self.spec.get("cwd"))
         except OSError as e:
             self.error = f"could not start {cmd[0]}: {e}"
-            return
-        threading.Thread(target=self._read, daemon=True, name=f"aig-upstream-{self.name}").start()
-        try:
-            self.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
-                                        "clientInfo": {"name": "agent-intent-gateway", "version": __version__}}, timeout)
-            self.notify("notifications/initialized")
-            self.refresh_tools(timeout)
-        except UpstreamError as e:
-            self.error = str(e)
+            return False
+        self.proc, self.framing, self.error = proc, framing, None
+        threading.Thread(target=self._read, args=(proc,), daemon=True, name=f"aig-upstream-{self.name}").start()
+        return True
 
     def refresh_tools(self, timeout: float = 30) -> None:
         tools, cursor = [], None
@@ -116,11 +151,17 @@ class Upstream:
         self.tools = tools
 
     def send(self, msg: dict) -> None:
-        if self.proc is None or self.proc.stdin is None or self.proc.poll() is not None:
+        proc = self.proc
+        if proc is None or proc.stdin is None or proc.poll() is not None:
             raise UpstreamError(f"{self.name} is not running")
+        body = json.dumps(msg).encode()
+        data = (f"Content-Length: {len(body)}\r\n\r\n".encode() + body) if self.framing == "content-length" else body + b"\n"
         with self._lock:
-            self.proc.stdin.write(json.dumps(msg) + "\n")
-            self.proc.stdin.flush()
+            try:
+                proc.stdin.write(data)
+                proc.stdin.flush()
+            except (BrokenPipeError, ValueError, OSError) as e:
+                raise UpstreamError(f"{self.name} is not running") from e
 
     def notify(self, method: str, params: dict | None = None) -> None:
         self.send({"jsonrpc": "2.0", "method": method, **({"params": params} if params else {})})
@@ -142,14 +183,37 @@ class Upstream:
         self.send({"jsonrpc": "2.0", "id": upstream_id, "method": "tools/call",
                    "params": {"name": tool, "arguments": arguments}})
 
-    def _read(self) -> None:
-        assert self.proc and self.proc.stdout
-        for line in self.proc.stdout:
-            if not line.strip():
+    @staticmethod
+    def _messages(out: IO[bytes]):
+        """Read either framing: JSON lines, or Content-Length headers followed by a body."""
+        while True:
+            line = out.readline()
+            if not line:
+                return
+            stripped = line.strip()
+            if not stripped:
                 continue
+            if stripped[:15].lower() == b"content-length:":
+                try:
+                    n = int(stripped.split(b":", 1)[1])
+                except ValueError:
+                    continue
+                while True:                      # any further headers, up to the blank line
+                    h = out.readline()
+                    if not h or not h.strip():
+                        break
+                body = out.read(n)
+            else:
+                body = stripped
             try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
+                yield json.loads(body)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+
+    def _read(self, proc: subprocess.Popen) -> None:
+        assert proc.stdout
+        for msg in self._messages(proc.stdout):
+            if not isinstance(msg, dict):
                 continue
             if "method" in msg:
                 if "id" in msg:   # a request from the server to the client: not supported through the gateway yet
@@ -167,7 +231,8 @@ class Upstream:
                 waiter[0].set()
             else:
                 self.on_response(self, msg)
-        self.error = self.error or f"{self.name} exited"
+        if proc is self.proc:      # a process replaced during framing detection doesn't count
+            self.error = self.error or f"{self.name} exited"
 
     def _safe_refresh(self) -> None:
         try:
@@ -175,17 +240,25 @@ class Upstream:
         except UpstreamError:
             pass
 
+    def _kill(self) -> None:
+        proc = self.proc
+        if proc and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
     def stop(self) -> None:
-        if self.proc and self.proc.poll() is None:
+        proc = self.proc
+        if proc and proc.poll() is None:
             try:
-                self.proc.stdin.close()
-                self.proc.wait(timeout=3)
+                proc.stdin.close()
+                proc.wait(timeout=3)
             except Exception:
-                self.proc.kill()
+                proc.kill()
 
 
 class Aggregator:
-    def __init__(self, gateway: Gateway, servers: dict[str, dict[str, Any]], out: IO[str] = sys.stdout):
+    def __init__(self, gateway: Gateway, servers: dict[str, dict[str, Any]], out: IO[str] = sys.stdout,
+                 on_detected: Callable[[dict[str, str]], None] | None = None):
         self.gateway = gateway
         self.out = out
         self._out_lock = threading.Lock()
@@ -193,7 +266,9 @@ class Aggregator:
         self._inflight: dict[str, tuple[Upstream, Any]] = {}   # upstream id -> (upstream, client id)
         self._by_client: dict[str, tuple[Upstream, str]] = {}  # client id -> (upstream, upstream id), for cancels
         self._lock = threading.Lock()
-        self.upstreams = {server_key(n): Upstream(server_key(n), s, self._on_upstream_response) for n, s in servers.items()}
+        self.on_detected = on_detected
+        self.upstreams = {server_key(n): Upstream(server_key(n), s, self._on_upstream_response, config_name=n)
+                          for n, s in servers.items()}
 
     # -- lifecycle ----------------------------------------------------------------
     def start(self) -> None:
@@ -205,6 +280,14 @@ class Aggregator:
         for u in self.upstreams.values():
             if u.error:
                 print(f"agent-intent-gateway: {u.error}", file=sys.stderr)
+        # Remember non-standard framing, so the next start doesn't have to probe for it.
+        found = {u.config_name: u.framing for u in self.upstreams.values()
+                 if not u.error and u.framing and "framing" not in u.spec and u.framing != "newline"}
+        if found and self.on_detected:
+            try:
+                self.on_detected(found)
+            except Exception as e:
+                print(f"agent-intent-gateway: could not record framing: {e}", file=sys.stderr)
 
     def stop(self) -> None:
         for u in self.upstreams.values():

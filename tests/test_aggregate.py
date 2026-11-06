@@ -169,3 +169,87 @@ def test_cli_end_to_end(tmp_path, monkeypatch):
         proc.stdin.close()
         proc.wait(timeout=5)
     assert len((tmp_path / "logs" / "d.jsonl").read_text().splitlines()) == 2
+
+
+# ---- servers that use Content-Length framing (seen in the field) ---------------------------
+FRAMED = str(Path(__file__).parent / "fixtures" / "framed_mcp.py")
+LAB_POLICY = parse_policy({"version": 1, "tools": {"lab.lab_health": {}, "lab.lab_memory_search": {"args": ["q"]}},
+                           "agents": [{"id": "assistant", "purpose": "p", "on_behalf_of": "user:*@*",
+                                       "allow": ["lab.*"]}]})
+
+
+def _framed_agg(spec_extra=None, on_detected=None):
+    out = io.StringIO()
+    gw = Gateway(Engine(LAB_POLICY), Session("assistant", "user:dana@corp.example"))
+    agg = Aggregator(gw, {"lab": {"command": sys.executable, "args": [FRAMED], **(spec_extra or {})}}, out=out,
+                     on_detected=on_detected)
+    return agg, out
+
+
+def test_content_length_server_detected_and_usable(monkeypatch):
+    from aig.aggregate import Upstream
+    monkeypatch.setattr(Upstream, "PROBE", 1.0)
+    found = []
+    agg, out = _framed_agg(on_detected=found.append)
+    started = time.time()
+    agg.start()
+    try:
+        up = agg.upstreams["lab"]
+        assert up.error is None and up.framing == "content-length"
+        assert set(agg.catalogue()) == {"lab__lab_health", "lab__lab_memory_search"}
+        assert found == [{"lab": "content-length"}]           # remembered for next time
+        assert time.time() - started < 5
+        agg.handle({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                    "params": {"name": "lab__lab_memory_search", "arguments": {"q": "roadmap"}}})
+        end = time.time() + 5
+        while time.time() < end and '"id": 9' not in out.getvalue():
+            time.sleep(0.01)
+        resp = [json.loads(l) for l in out.getvalue().splitlines() if json.loads(l).get("id") == 9][0]
+        assert '"q": "roadmap"' in resp["result"]["content"][0]["text"]
+    finally:
+        agg.stop()
+
+
+def test_explicit_framing_skips_the_probe():
+    found = []
+    agg, _ = _framed_agg({"framing": "content-length"}, on_detected=found.append)
+    started = time.time()
+    agg.start()
+    try:
+        assert agg.upstreams["lab"].framing == "content-length" and time.time() - started < 3
+        assert found == []                                    # already known, nothing to record
+    finally:
+        agg.stop()
+
+
+def test_standard_server_is_not_reported():
+    found = []
+    gw = Gateway(Engine(POLICY), Session("assistant", "user:dana@corp.example"))
+    agg = Aggregator(gw, {"files": {"command": sys.executable, "args": [FAKE, "files"]}}, out=io.StringIO(),
+                     on_detected=found.append)
+    agg.start()
+    try:
+        assert agg.upstreams["files"].framing == "newline" and found == []
+    finally:
+        agg.stop()
+
+
+def test_cli_records_detected_framing_in_the_agent_config(tmp_path, monkeypatch):
+    import subprocess
+    import yaml
+    pol = tmp_path / "policy.yaml"
+    pol.write_text(yaml.safe_dump({"version": 1, "tools": {"lab.lab_health": {}},
+                                   "agents": [{"id": "assistant", "purpose": "p", "on_behalf_of": "user:*@*", "allow": ["lab.*"]}]}))
+    cfg = tmp_path / "agent.json"
+    cfg.write_text(json.dumps({"agent": "assistant", "principal": "user:dana@corp.example", "policy": str(pol),
+                               "log": str(tmp_path / "d.jsonl"), "servers": {"lab": {"command": sys.executable, "args": [FRAMED]}}}))
+    proc = subprocess.Popen([sys.executable, "-m", "aig.cli", "proxy", "--config", str(cfg)], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, text=True, cwd=Path(__file__).parent.parent)
+    try:
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n")
+        proc.stdin.flush()
+        assert {t["name"] for t in json.loads(proc.stdout.readline())["result"]["tools"]} == {"lab__lab_health"}
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=10)
+    assert json.loads(cfg.read_text())["servers"]["lab"]["framing"] == "content-length"

@@ -284,7 +284,7 @@ def apply(s: Settings, projects: list[Path] | None = None, only: set[str] | None
         entry = s.entry_name
         for name, spec in smap.items():
             if transport(spec) == "stdio" and not is_aig_entry(spec):
-                agent_cfg["servers"][name] = {k: v for k, v in spec.items() if k in ("command", "args", "env", "cwd")}
+                agent_cfg["servers"][name] = {k: v for k, v in spec.items() if k in ("command", "args", "env", "cwd", "framing")}
                 if spec.get("disabled"):
                     agent_cfg["servers"].pop(name)
                     agent_cfg.setdefault("disabled", {})[name] = spec

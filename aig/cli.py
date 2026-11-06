@@ -351,7 +351,18 @@ def main(argv: list[str] | None = None) -> int:
         from .aggregate import Aggregator
 
         gw = Gateway(engine, session, Ledger(a.log), hide_out_of_scope=not a.show_all_tools, on_decision=emitter)
-        Aggregator(gw, agent_cfg["servers"]).run()
+        def remember(found: dict[str, str]) -> None:
+            path = Path(a.config).expanduser()
+            doc = json.loads(path.read_text())
+            for name, framing in found.items():
+                if name in doc.get("servers", {}):
+                    doc["servers"][name]["framing"] = framing
+            tmp = path.with_name(f".{path.name}.aig-tmp")
+            tmp.write_text(json.dumps(doc, indent=2))
+            tmp.chmod(path.stat().st_mode & 0o777)
+            tmp.replace(path)
+
+        Aggregator(gw, agent_cfg["servers"], on_detected=remember if a.config.endswith(".json") else None).run()
         return 0
 
     upstream = a.upstream[1:] if a.upstream[:1] == ["--"] else a.upstream
